@@ -1,0 +1,8 @@
+streamlit
+pandas
+gspread
+fpdf
+python-dateutil
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
