@@ -1,36 +1,3 @@
-import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
-
-try:
-    st.write("🔄 Iniciando autenticación con Google Sheets...")
-
-    # ⚠️ IMPORTANTE: Define los scopes correctos
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-
-    # Autenticación con scope
-    credentials = Credentials.from_service_account_info(
-        st.secrets["GOOGLE_SERVICE_ACCOUNT"],
-        scopes=scopes
-    )
-    st.success("✅ Credenciales cargadas correctamente")
-
-    client = gspread.authorize(credentials)
-    st.success("✅ Cliente gspread autorizado")
-
-    # ID del documento
-    SHEET_ID = "1abcDXYZ456EFGH789ijklmnopQRstuvWxYz"  # 🔁 reemplaza con el real
-
-    sheet = client.open_by_key(SHEET_ID)
-    st.success(f"✅ Hoja abierta correctamente: {sheet.title}")
-
-except Exception as e:
-    st.error("❌ Error detectado al conectar con Google Sheets")
-    st.exception(e)
-
-
-
-
 
 # app.py (versión Streamlit para usar desde tu iPhone)
 
@@ -49,7 +16,7 @@ creds = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT
 client = gspread.authorize(creds)
 
 # === URLs de hojas
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1bjV4EaDNNbJfN4huzbNpTFmj-vfCr7A2474jhO81-bE/edit"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1bjV4EaDNNbJfN4huzbNpTFmj-vfCr7A2474jhO81-bE/edit?gid=1318862509#gid=1318862509"
 sheet = client.open_by_url(SHEET_URL)
 productos_ws = sheet.worksheet("Productos")
 pedidos_ws = sheet.worksheet("Pedidos")
