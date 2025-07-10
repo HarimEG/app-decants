@@ -1,3 +1,21 @@
+import streamlit as st
+from google.oauth2.service_account import Credentials
+import gspread
+
+try:
+    credentials = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+    client = gspread.authorize(credentials)
+    sheet = client.open_by_url(SHEET_URL)
+    st.success("Conexión exitosa")
+except Exception as e:
+    st.error(f"Error al conectar: {e}")
+    raise
+
+
+
+
+
+
 # app.py (versión Streamlit para usar desde tu iPhone)
 
 import streamlit as st
