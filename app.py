@@ -1,16 +1,26 @@
 import streamlit as st
-from google.oauth2.service_account import Credentials
 import gspread
+from google.oauth2.service_account import Credentials
 
 try:
-    credentials = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-    client = gspread.authorize(credentials)
-    sheet = client.open_by_url(SHEET_URL)
-    st.success("Conexión exitosa")
-except Exception as e:
-    st.error(f"Error al conectar: {e}")
-    raise
+    st.write("🔄 Iniciando autenticación con Google Sheets...")
 
+    # Autenticación
+    credentials = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+    st.success("✅ Credenciales cargadas correctamente")
+
+    client = gspread.authorize(credentials)
+    st.success("✅ Cliente gspread autorizado")
+
+    # Aquí define el ID manualmente (sin usar SHEET_URL)
+    SHEET_ID = "1abcDXYZ456EFGH789ijklmnopQRstuvWxYz"  # 🔁 Reemplaza con el ID real
+
+    sheet = client.open_by_key(SHEET_ID)
+    st.success(f"✅ Hoja abierta correctamente: {sheet.title}")
+
+except Exception as e:
+    st.error("❌ Error detectado al conectar con Google Sheets")
+    st.exception(e)
 
 
 
