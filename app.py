@@ -69,9 +69,9 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf.cell(120, 10, "TOTAL GENERAL", 1)
     pdf.cell(30, 10, f"${total_general:.2f}", 1)
 
-    output = io.BytesIO()
-    pdf.output(output)
-    return output
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    return pdf_bytes
+
 
 # === Streamlit App ===
 st.set_page_config(page_title="App Decants", layout="centered")
