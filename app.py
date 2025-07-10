@@ -85,7 +85,7 @@ pedido_id = int(pedidos_df["# Pedido"].max()) + 1 if not pedidos_df.empty else 1
 with st.form("formulario"):
     cliente = st.text_input("Nombre del Cliente")
     fecha = st.date_input("Fecha del pedido", value=datetime.today())
-    estatus = st.selectbox("Estatus", ["Pendiente", "Pagado", "Entregado"])
+    estatus = st.selectbox("Estatus", ["Cotizacion", "Pendiente", "Pagado", "En Proceso" "Entregado"])
 
     st.markdown("---")
     st.subheader("Agregar Productos")
@@ -94,7 +94,7 @@ with st.form("formulario"):
     with col1:
         producto = st.selectbox("Producto", productos_df["Producto"].tolist())
     with col2:
-        ml = st.number_input("Mililitros", min_value=0.0, step=0.5)
+        ml = st.number_input("Mililitros", min_value=0.0, step=1)
 
     agregar = st.form_submit_button("Agregar producto")
 
