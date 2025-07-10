@@ -81,7 +81,8 @@ productos_df = cargar_productos()
 pedidos_df = cargar_pedidos()
 pedido_id = int(pedidos_df["# Pedido"].max()) + 1 if not pedidos_df.empty else 1
 
-with st.form("formulario"):
+if not st.session_state.pedido_guardado:
+    with st.form("formulario"):
     cliente = st.text_input("Nombre del Cliente")
     fecha = st.date_input("Fecha del pedido", value=datetime.today())
     estatus = st.selectbox("Estatus", ["Pendiente", "Pagado", "Entregado"])
@@ -108,6 +109,7 @@ with st.form("formulario"):
             st.session_state.productos.append((producto, ml, costo, total))
 
     if st.session_state.productos:
+        st.session_state.pedido_guardado = True
         st.markdown("### Productos en el pedido")
         st.table(pd.DataFrame(st.session_state.productos, columns=["Producto", "ML", "Costo", "Total"]))
 
@@ -142,5 +144,10 @@ if submit and st.session_state.productos:
         file_name=f"Pedido_{pedido_id}_{cliente.replace(' ', '')}.pdf",
         mime="application/pdf"
     )
-
+    st.markdown("---")
+    if st.session_state.pedido_guardado:
+        if st.button("Registrar otro pedido"):
+            st.session_state.pedido_guardado = False
+            st.experimental_rerun()    
+    
     st.session_state.productos = []
