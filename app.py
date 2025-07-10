@@ -5,15 +5,21 @@ from google.oauth2.service_account import Credentials
 try:
     st.write("🔄 Iniciando autenticación con Google Sheets...")
 
-    # Autenticación
-    credentials = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+    # ⚠️ IMPORTANTE: Define los scopes correctos
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+
+    # Autenticación con scope
+    credentials = Credentials.from_service_account_info(
+        st.secrets["GOOGLE_SERVICE_ACCOUNT"],
+        scopes=scopes
+    )
     st.success("✅ Credenciales cargadas correctamente")
 
     client = gspread.authorize(credentials)
     st.success("✅ Cliente gspread autorizado")
 
-    # Aquí define el ID manualmente (sin usar SHEET_URL)
-    SHEET_ID = "1abcDXYZ456EFGH789ijklmnopQRstuvWxYz"  # 🔁 Reemplaza con el ID real
+    # ID del documento
+    SHEET_ID = "1abcDXYZ456EFGH789ijklmnopQRstuvWxYz"  # 🔁 reemplaza con el real
 
     sheet = client.open_by_key(SHEET_ID)
     st.success(f"✅ Hoja abierta correctamente: {sheet.title}")
