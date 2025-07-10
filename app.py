@@ -81,11 +81,11 @@ productos_df = cargar_productos()
 pedidos_df = cargar_pedidos()
 pedido_id = int(pedidos_df["# Pedido"].max()) + 1 if not pedidos_df.empty else 1
 
-if not st.session_state.pedido_guardado:
-    with st.form("formulario"):
-    cliente = st.text_input("Nombre del Cliente")
-    fecha = st.date_input("Fecha del pedido", value=datetime.today())
-    estatus = st.selectbox("Estatus", ["Pendiente", "Pagado", "Entregado"])
+    if not st.session_state.pedido_guardado:
+        with st.form("formulario"):
+        cliente = st.text_input("Nombre del Cliente")
+        fecha = st.date_input("Fecha del pedido", value=datetime.today())
+        estatus = st.selectbox("Estatus", ["Pendiente", "Pagado", "Entregado"])
 
     st.markdown("---")
     st.subheader("Agregar Productos")
