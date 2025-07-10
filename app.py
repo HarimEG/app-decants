@@ -40,6 +40,7 @@ def guardar_pedidos(df):
 def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf = FPDF()
     pdf.add_page()
+    pdf.image("https://github.com/HarimEG/app-decants/blob/main/hdecants_logo.jpg", x=10, y=8, w=30)
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
     pdf.set_font("Arial", size=12)
@@ -76,7 +77,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
 # === Streamlit App ===
 st.set_page_config(page_title="App Decants", layout="centered")
 st.title("H DECANTS Pedidos")
-
+st.image("https://github.com/HarimEG/app-decants/blob/main/hdecants_logo.jpg", width=150)
 productos_df = cargar_productos()
 pedidos_df = cargar_pedidos()
 pedido_id = int(pedidos_df["# Pedido"].max()) + 1 if not pedidos_df.empty else 1
