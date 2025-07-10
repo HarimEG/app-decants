@@ -75,7 +75,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
 
 # === Streamlit App ===
 st.set_page_config(page_title="App Decants", layout="centered")
-st.title("Registro de Pedidos - Decants")
+st.title("H DECANTS Pedidos")
 
 productos_df = cargar_productos()
 pedidos_df = cargar_pedidos()
