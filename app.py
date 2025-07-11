@@ -37,10 +37,23 @@ def guardar_pedidos(df):
     pedidos_ws.update([df.columns.tolist()] + df.values.tolist())
 
 # === PDF ===
+import requests
+
 def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf = FPDF()
     pdf.add_page()
-    
+
+    # Descargar la imagen del logo
+    logo_url = "https://raw.githubusercontent.com/HarimEG/app-decants/main/hdecants_logo.jpg"
+    response = requests.get(logo_url)
+    if response.status_code == 200:
+        with open("temp_logo.jpg", "wb") as f:
+            f.write(response.content)
+        pdf.image("temp_logo.jpg", x=10, y=8, w=30)
+        os.remove("temp_logo.jpg")  # Limpieza
+    else:
+        print("No se pudo descargar el logo")
+
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
     pdf.set_font("Arial", size=12)
@@ -55,7 +68,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf.cell(30, 10, "Costo", 1)
     pdf.cell(30, 10, "Total", 1)
     pdf.ln()
-    pdf.image("https://raw.githubusercontent.com/HarimEG/app-decants/072576bfb6326d13c6528c7723e8b4f85c2abc65/hdecants_logo.jpg", x=10, y=8, w=30)
+
     total_general = 0
     pdf.set_font("Arial", size=12)
     for p in productos:
@@ -70,8 +83,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf.cell(120, 10, "TOTAL GENERAL", 1)
     pdf.cell(30, 10, f"${total_general:.2f}", 1)
 
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
-    return pdf_bytes
+    return pdf.output(dest="S").encode("latin1")
 
 
 # === Streamlit App ===
