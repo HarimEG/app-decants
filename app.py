@@ -39,61 +39,67 @@ def guardar_pedidos(df):
 # === PDF ===
 import requests
 
-import requests
+import base64
 
 def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf = FPDF()
     pdf.add_page()
 
-    # === Logo (arriba derecha) ===
-    logo_url = "https://raw.githubusercontent.com/HarimEG/app-decants/main/hdecants_logo.jpg"
-    response = requests.get(logo_url)
-    if response.status_code == 200:
-        with open("temp_logo.jpg", "wb") as f:
-            f.write(response.content)
-        pdf.image("temp_logo.jpg", x=160, y=10, w=40)
-        os.remove("temp_logo.jpg")
+    # Logo en la parte superior derecha
+    pdf.image("hdecants_logo.jpg", x=160, y=8, w=30)
 
-    # === Encabezado ===
-    pdf.set_xy(10, 15)
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(100, 10, f"PEDIDO #{pedido_id}", ln=True)
+    pdf.cell(0, 15, f"Pedido #{pedido_id}", ln=True)
 
     pdf.set_font("Arial", "", 12)
-    pdf.cell(100, 8, f"Cliente: {cliente}", ln=True)
-    pdf.cell(100, 8, f"Fecha: {fecha}", ln=True)
-    pdf.cell(100, 8, f"Estatus: {estatus}", ln=True)
-    pdf.ln(10)
+    pdf.cell(0, 10, f"Cliente: {cliente}", ln=True)
+    pdf.cell(0, 10, f"Fecha: {fecha}", ln=True)
+    pdf.cell(0, 10, f"Estatus: {estatus}", ln=True)
+    pdf.ln(8)
 
-    # === Tabla de productos ===
+    # Tabla de productos
     pdf.set_font("Arial", "B", 12)
     pdf.cell(70, 10, "Producto", 1)
-    pdf.cell(25, 10, "ML", 1)
+    pdf.cell(20, 10, "ML", 1)
     pdf.cell(30, 10, "Costo x ML", 1)
     pdf.cell(30, 10, "Total", 1)
     pdf.ln()
 
-    total_general = 0
     pdf.set_font("Arial", "", 12)
-    for producto, ml, costo, total in productos:
+    total_general = 0
+    for prod, ml, costo, total in productos:
         total_general += total
-        pdf.cell(70, 10, producto, 1)
-        pdf.cell(25, 10, f"{ml:.1f}", 1)
+        pdf.cell(70, 10, prod, 1)
+        pdf.cell(20, 10, str(ml), 1)
         pdf.cell(30, 10, f"${costo:.2f}", 1)
         pdf.cell(30, 10, f"${total:.2f}", 1)
         pdf.ln()
 
-    # === Total general ===
+    # Total general
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(125, 10, "TOTAL GENERAL", 1)
+    pdf.cell(120, 10, "TOTAL GENERAL", 1)
     pdf.cell(30, 10, f"${total_general:.2f}", 1)
     pdf.ln(15)
 
-    # === Footer opcional (puedes personalizarlo) ===
-    pdf.set_font("Arial", "I", 10)
-    pdf.cell(0, 10, "Gracias por tu compra. H DECANTS", ln=True, align="C")
+    # Datos de cuenta o pago
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "Datos de depósito:", ln=True)
 
-    return pdf.output(dest="S").encode("latin1")
+    pdf.set_font("Arial", "", 11)
+    pdf.cell(0, 8, "Banco: BBVA", ln=True)
+    pdf.cell(0, 8, "Cuenta: 1234 5678 9012 3456", ln=True)
+    pdf.cell(0, 8, "CLABE: 012345678901234567", ln=True)
+    pdf.cell(0, 8, "A nombre de: H DECANTS", ln=True)
+    pdf.ln(10)
+
+    # Costo de envío
+    pdf.set_font("Arial", "I", 10)
+    pdf.multi_cell(0, 8, "🛈 El costo de envío es de $255 y se añade al total final si el pedido requiere paquetería.\nFavor de confirmar con el vendedor.")
+
+    # Generar como base64 para ver en navegador
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    return pdf_bytes, b64_pdf
 
 
 # === Streamlit App ===
@@ -160,21 +166,27 @@ if submit and st.session_state.productos:
 
     st.success(f"Pedido #{pedido_id} guardado correctamente")
 
-    pdf_bytes = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
-    st.download_button(
-        label="Descargar PDF del pedido",
-        data=pdf_bytes,
-        file_name=f"Pedido_{pedido_id}_{cliente.replace(' ', '')}.pdf",
-        mime="application/pdf"
-    )
-    
-    st.markdown("---")
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        if st.button("🔁 Nuevo pedido"):
-            st.session_state.productos = []
-            st.session_state.pedido_guardado = False
-            st.experimental_rerun()
+pdf_bytes, b64_pdf = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
+
+# Ver PDF en navegador
+st.markdown("### 📄 Vista previa del pedido")
+href = f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank">Ver PDF en nueva pestaña</a>'
+st.markdown(href, unsafe_allow_html=True)
+
+# Botón para descarga
+st.download_button(
+    label="⬇️ Descargar PDF del pedido",
+    data=pdf_bytes,
+    file_name=f"Pedido_{pedido_id}_{cliente.replace(' ', '')}.pdf",
+    mime="application/pdf"
+)
+
+# Botón para reiniciar pedido
+st.markdown("---")
+if st.button("🔁 Registrar otro pedido"):
+    st.session_state.productos = []
+    st.session_state.pedido_guardado = False
+    st.experimental_rerun()
 
     
     st.session_state.productos = []
