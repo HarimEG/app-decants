@@ -167,10 +167,14 @@ if submit and st.session_state.productos:
         file_name=f"Pedido_{pedido_id}_{cliente.replace(' ', '')}.pdf",
         mime="application/pdf"
     )
+    
     st.markdown("---")
-    if st.session_state.pedido_guardado:
-        if st.button("Registrar otro pedido"):
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("🔁 Nuevo pedido"):
+            st.session_state.productos = []
             st.session_state.pedido_guardado = False
-            st.experimental_rerun()    
+            st.experimental_rerun()
+
     
     st.session_state.productos = []
