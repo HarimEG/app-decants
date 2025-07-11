@@ -89,7 +89,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf.cell(0, 8, "Banco: BBVA", ln=True)
     pdf.cell(0, 8, "Cuenta: 1234 5678 9012 3456", ln=True)
     pdf.cell(0, 8, "CLABE: 012345678901234567", ln=True)
-    pdf.cell(0, 8, "A nombre de: H DECANTS", ln=True)
+    pdf.cell(0, 8, "A nombre de: Harim Escalona ", ln=True)
     pdf.ln(10)
 
     # Costo de envío
