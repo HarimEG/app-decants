@@ -40,7 +40,7 @@ def guardar_pedidos(df):
 def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf = FPDF()
     pdf.add_page()
-    pdf.image("https://raw.githubusercontent.com/HarimEG/app-decants/072576bfb6326d13c6528c7723e8b4f85c2abc65/hdecants_logo.jpg", x=10, y=8, w=30)
+    
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
     pdf.set_font("Arial", size=12)
@@ -55,7 +55,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf.cell(30, 10, "Costo", 1)
     pdf.cell(30, 10, "Total", 1)
     pdf.ln()
-
+    pdf.image("https://raw.githubusercontent.com/HarimEG/app-decants/072576bfb6326d13c6528c7723e8b4f85c2abc65/hdecants_logo.jpg", x=10, y=8, w=30)
     total_general = 0
     pdf.set_font("Arial", size=12)
     for p in productos:
