@@ -39,49 +39,59 @@ def guardar_pedidos(df):
 # === PDF ===
 import requests
 
+import requests
+
 def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf = FPDF()
     pdf.add_page()
 
-    # Descargar la imagen del logo
+    # === Logo (arriba derecha) ===
     logo_url = "https://raw.githubusercontent.com/HarimEG/app-decants/main/hdecants_logo.jpg"
     response = requests.get(logo_url)
     if response.status_code == 200:
         with open("temp_logo.jpg", "wb") as f:
             f.write(response.content)
-        pdf.image("temp_logo.jpg", x=10, y=8, w=30)
-        os.remove("temp_logo.jpg")  # Limpieza
-    else:
-        print("No se pudo descargar el logo")
+        pdf.image("temp_logo.jpg", x=160, y=10, w=40)
+        os.remove("temp_logo.jpg")
 
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
-    pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, f"Cliente: {cliente}", ln=True)
-    pdf.cell(0, 10, f"Fecha: {fecha}", ln=True)
-    pdf.cell(0, 10, f"Estatus: {estatus}", ln=True)
+    # === Encabezado ===
+    pdf.set_xy(10, 15)
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(100, 10, f"PEDIDO #{pedido_id}", ln=True)
+
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(100, 8, f"Cliente: {cliente}", ln=True)
+    pdf.cell(100, 8, f"Fecha: {fecha}", ln=True)
+    pdf.cell(100, 8, f"Estatus: {estatus}", ln=True)
     pdf.ln(10)
 
+    # === Tabla de productos ===
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(60, 10, "Producto", 1)
-    pdf.cell(30, 10, "ML", 1)
-    pdf.cell(30, 10, "Costo", 1)
+    pdf.cell(70, 10, "Producto", 1)
+    pdf.cell(25, 10, "ML", 1)
+    pdf.cell(30, 10, "Costo x ML", 1)
     pdf.cell(30, 10, "Total", 1)
     pdf.ln()
 
     total_general = 0
-    pdf.set_font("Arial", size=12)
-    for p in productos:
-        total_general += p[3]
-        pdf.cell(60, 10, p[0], 1)
-        pdf.cell(30, 10, str(p[1]), 1)
-        pdf.cell(30, 10, f"${p[2]:.2f}", 1)
-        pdf.cell(30, 10, f"${p[3]:.2f}", 1)
+    pdf.set_font("Arial", "", 12)
+    for producto, ml, costo, total in productos:
+        total_general += total
+        pdf.cell(70, 10, producto, 1)
+        pdf.cell(25, 10, f"{ml:.1f}", 1)
+        pdf.cell(30, 10, f"${costo:.2f}", 1)
+        pdf.cell(30, 10, f"${total:.2f}", 1)
         pdf.ln()
 
+    # === Total general ===
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(120, 10, "TOTAL GENERAL", 1)
+    pdf.cell(125, 10, "TOTAL GENERAL", 1)
     pdf.cell(30, 10, f"${total_general:.2f}", 1)
+    pdf.ln(15)
+
+    # === Footer opcional (puedes personalizarlo) ===
+    pdf.set_font("Arial", "I", 10)
+    pdf.cell(0, 10, "Gracias por tu compra. H DECANTS", ln=True, align="C")
 
     return pdf.output(dest="S").encode("latin1")
 
