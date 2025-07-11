@@ -188,7 +188,7 @@ st.markdown("---")
 if st.button("🔁 Registrar otro pedido"):
     st.session_state.productos = []
     st.session_state.pedido_guardado = False
-    st.experimental_rerun()
+    st.rerun()
 
     
     st.session_state.productos = []
