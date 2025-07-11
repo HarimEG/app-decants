@@ -119,11 +119,13 @@ with st.form("formulario"):
     st.markdown("---")
     st.subheader("Agregar Productos")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        producto = st.selectbox("Producto", productos_df["Producto"].tolist())
-    with col2:
-        ml = st.number_input("Mililitros", min_value=0.0, step=1.0)
+col1, col2 = st.columns(2)
+with col1:
+    search_term = st.text_input("Buscar producto")
+    opciones_filtradas = productos_df[productos_df["Producto"].str.contains(search_term, case=False, na=False)]["Producto"].tolist()
+    producto = st.selectbox("Producto", opciones_filtradas if opciones_filtradas else ["Ningún resultado"])
+with col2:
+    ml = st.number_input("Mililitros", min_value=0.0, step=1.0)
 
     agregar = st.form_submit_button("Agregar producto")
 
