@@ -45,61 +45,47 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf = FPDF()
     pdf.add_page()
 
-    # Logo en la parte superior derecha
-    pdf.image("hdecants_logo.jpg", x=160, y=8, w=30)
+    # Logo arriba derecha (ajusta path o URL local)
+    pdf.image("hdecants_logo.jpg", x=160, y=8, w=30)  
 
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 15, f"Pedido #{pedido_id}", ln=True)
-
-    pdf.set_font("Arial", "", 12)
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
+    pdf.set_font("Arial", size=12)
     pdf.cell(0, 10, f"Cliente: {cliente}", ln=True)
     pdf.cell(0, 10, f"Fecha: {fecha}", ln=True)
     pdf.cell(0, 10, f"Estatus: {estatus}", ln=True)
-    pdf.ln(8)
+    pdf.ln(10)
 
-    # Tabla de productos
+    # Tabla encabezado
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(70, 10, "Producto", 1)
-    pdf.cell(20, 10, "ML", 1)
-    pdf.cell(30, 10, "Costo x ML", 1)
+    pdf.cell(60, 10, "Producto", 1)
+    pdf.cell(30, 10, "ML", 1)
+    pdf.cell(30, 10, "Costo", 1)
     pdf.cell(30, 10, "Total", 1)
     pdf.ln()
 
-    pdf.set_font("Arial", "", 12)
     total_general = 0
-    for prod, ml, costo, total in productos:
-        total_general += total
-        pdf.cell(70, 10, prod, 1)
-        pdf.cell(20, 10, str(ml), 1)
-        pdf.cell(30, 10, f"${costo:.2f}", 1)
-        pdf.cell(30, 10, f"${total:.2f}", 1)
+    pdf.set_font("Arial", size=12)
+    for p in productos:
+        total_general += p[3]
+        pdf.cell(60, 10, p[0], 1)
+        pdf.cell(30, 10, str(p[1]), 1)
+        pdf.cell(30, 10, f"${p[2]:.2f}", 1)
+        pdf.cell(30, 10, f"${p[3]:.2f}", 1)
         pdf.ln()
 
-    # Total general
+    # Línea separadora antes del total
+    pdf.set_draw_color(0, 0, 0)
+    pdf.line(10, pdf.get_y(), 190, pdf.get_y())
+
+    # Total general destacado con fondo gris claro
+    pdf.set_fill_color(220, 220, 220)
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(120, 10, "TOTAL GENERAL", 1)
-    pdf.cell(30, 10, f"${total_general:.2f}", 1)
-    pdf.ln(15)
+    pdf.cell(120, 10, "TOTAL GENERAL", 1, 0, 'R', fill=True)
+    pdf.cell(30, 10, f"${total_general:.2f}", 1, 1, 'C', fill=True)
 
-    # Datos de cuenta o pago
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Datos de depósito:", ln=True)
-
-    pdf.set_font("Arial", "", 11)
-    pdf.cell(0, 8, "Banco: BBVA", ln=True)
-    pdf.cell(0, 8, "Cuenta: 1234 5678 9012 3456", ln=True)
-    pdf.cell(0, 8, "CLABE: 012345678901234567", ln=True)
-    pdf.cell(0, 8, "A nombre de: Harim Escalona ", ln=True)
-    pdf.ln(10)
-
-    # Costo de envío
-    pdf.set_font("Arial", "I", 10)
-    pdf.multi_cell(0, 8, "El costo de envio es de $255 y se añade al total final si el pedido requiere paqueteria.\nFavor de confirmar con el vendedor.")
-
-    # Generar como base64 para ver en navegador
     pdf_bytes = pdf.output(dest='S').encode('latin1')
-    b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    return pdf_bytes, b64_pdf
+    return pdf_bytes
 
 
 # === Streamlit App ===
