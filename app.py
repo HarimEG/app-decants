@@ -94,7 +94,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
 
     # Costo de envío
     pdf.set_font("Arial", "I", 10)
-    pdf.multi_cell(0, 8, "🛈 El costo de envío es de $255 y se añade al total final si el pedido requiere paquetería.\nFavor de confirmar con el vendedor.")
+    pdf.multi_cell(0, 8, "El costo de envio es de $255 y se añade al total final si el pedido requiere paqueteria.\nFavor de confirmar con el vendedor.")
 
     # Generar como base64 para ver en navegador
     pdf_bytes = pdf.output(dest='S').encode('latin1')
