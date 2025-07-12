@@ -156,6 +156,19 @@ if submit and st.session_state.productos:
 
 pdf_bytes = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
 
+import base64  # Asegúrate de tener esto al inicio del script
+
+# Generar el PDF
+pdf_bytes = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
+
+# Convertir a base64 para vista previa en navegador
+b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+
+# Mostrar enlace
+href = f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank">Ver PDF en nueva pestaña</a>'
+st.markdown(href, unsafe_allow_html=True)
+
+
 # Ver PDF en navegador
 st.markdown("### 📄 Vista previa del pedido")
 href = f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank">Ver PDF en nueva pestaña</a>'
