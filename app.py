@@ -154,7 +154,7 @@ if submit and st.session_state.productos:
 
     st.success(f"Pedido #{pedido_id} guardado correctamente")
 
-pdf_bytes, b64_pdf = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
+pdf_bytes = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
 
 # Ver PDF en navegador
 st.markdown("### 📄 Vista previa del pedido")
