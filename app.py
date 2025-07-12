@@ -191,3 +191,16 @@ if st.button("🔁 Registrar otro pedido"):
 
     
     st.session_state.productos = []
+    
+# === Historial por cliente ===
+st.markdown("---")
+if st.button("Ver historial por cliente"):
+    historial_df = cargar_pedidos()
+    nombre_cliente = st.text_input("Filtrar por nombre del cliente")
+
+    if nombre_cliente:
+        historial_df = historial_df[historial_df["Nombre Cliente"].str.contains(nombre_cliente, case=False)]
+
+    st.markdown("### Historial de pedidos")
+    st.dataframe(historial_df, use_container_width=True)
+
