@@ -346,4 +346,62 @@ if st.button("Ver historial por cliente"):
 
     st.markdown("### Historial de pedidos")
     st.dataframe(historial_df, use_container_width=True)
+    
+# === Simulación de ventana emergente para editar pedido ===
+
+if "editar_pedido_id" in st.session_state:
+    pedido_id = st.session_state.editar_pedido_id
+    pedido_editar = pedidos_df[pedidos_df["# Pedido"] == pedido_id]
+
+    if not pedido_editar.empty:
+        st.markdown("---")
+        st.subheader(f"✏️ Editar Pedido #{pedido_id}")
+
+        nuevo_estatus = st.selectbox(
+            "Actualizar estatus",
+            ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"],
+            index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(pedido_editar.iloc[0]["Estatus"])
+        )
+
+        productos_pedido = pedido_editar[["Producto", "Mililitros", "Costo x ml", "Total"]].values.tolist()
+
+        st.markdown("### Productos del pedido")
+        productos_editados = []
+        for i, (prod, ml, costo, total) in enumerate(productos_pedido):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                nuevo_ml = st.number_input(f"{prod} - ML", value=ml, min_value=0.0, step=0.5, key=f"ml_edit_{i}")
+            with col2:
+                nuevo_total = nuevo_ml * costo
+                st.write(f"Total: ${nuevo_total:.2f}")
+            productos_editados.append((prod, nuevo_ml, costo, nuevo_total))
+
+        if st.button("💾 Guardar cambios"):
+            # Eliminar pedido original
+            pedidos_df.drop(pedidos_df[pedidos_df["# Pedido"] == pedido_id].index, inplace=True)
+
+            # Insertar filas actualizadas
+            nuevas_filas = []
+            for prod, ml, costo, total in productos_editados:
+                nuevas_filas.append({
+                    "# Pedido": pedido_id,
+                    "Nombre Cliente": pedido_editar.iloc[0]["Nombre Cliente"],
+                    "Fecha": pedido_editar.iloc[0]["Fecha"],
+                    "Producto": prod,
+                    "Mililitros": ml,
+                    "Costo x ml": costo,
+                    "Total": total,
+                    "Estatus": nuevo_estatus
+                })
+
+            pedidos_df = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
+            guardar_pedidos(pedidos_df)
+            st.success("✅ Pedido actualizado correctamente.")
+            del st.session_state.editar_pedido_id
+            st.experimental_rerun()
+
+        if st.button("❌ Cancelar"):
+            del st.session_state.editar_pedido_id
+            st.experimental_rerun()
+
 
