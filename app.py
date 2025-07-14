@@ -331,77 +331,58 @@ if st.button("🔁 Registrar otro pedido"):
     
     st.session_state.productos = []
     
-    
-st.markdown("---")
-mostrar_historial_y_editar()
+# === Historial por Cliente y Edición de Pedido ===
+st.subheader("📋 Historial de Pedidos por Cliente")
 
-# === Historial por cliente ===
-st.markdown("---")
-if st.button("Ver historial por cliente"):
-    historial_df = cargar_pedidos()
-    nombre_cliente = st.text_input("Filtrar por nombre del cliente")
+nombre_cliente_filtro = st.text_input("Buscar cliente por nombre")
+pedidos_filtrados = pedidos_df[pedidos_df["Nombre Cliente"].str.contains(nombre_cliente_filtro, case=False, na=False)]
 
-    if nombre_cliente:
-        historial_df = historial_df[historial_df["Nombre Cliente"].str.contains(nombre_cliente, case=False)]
+if not pedidos_filtrados.empty:
+    st.dataframe(pedidos_filtrados, use_container_width=True)
 
-    st.markdown("### Historial de pedidos")
-    st.dataframe(historial_df, use_container_width=True)
-    
-# === Simulación de ventana emergente para editar pedido ===
+    pedido_ids = pedidos_filtrados["# Pedido"].unique().tolist()
+    pedido_id_sel = st.selectbox("Selecciona un pedido para editar", pedido_ids)
 
-if "editar_pedido_id" in st.session_state:
-    pedido_id = st.session_state.editar_pedido_id
-    pedido_editar = pedidos_df[pedidos_df["# Pedido"] == pedido_id]
+    pedido_seleccionado = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]
 
-    if not pedido_editar.empty:
-        st.markdown("---")
-        st.subheader(f"✏️ Editar Pedido #{pedido_id}")
+    if not pedido_seleccionado.empty:
+        with st.expander(f"Editar Pedido #{pedido_id_sel}"):
+            nuevo_estatus = st.selectbox("Nuevo Estatus", ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"], 
+                                         index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(pedido_seleccionado["Estatus"].iloc[0]))
 
-        nuevo_estatus = st.selectbox(
-            "Actualizar estatus",
-            ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"],
-            index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(pedido_editar.iloc[0]["Estatus"])
-        )
+            nuevo_producto = st.selectbox("Agregar Producto", productos_df["Producto"].unique())
+            nuevo_ml = st.number_input("Mililitros a agregar", min_value=0.0, step=1.0)
 
-        productos_pedido = pedido_editar[["Producto", "Mililitros", "Costo x ml", "Total"]].values.tolist()
+            if st.button("Agregar Producto al Pedido"):
+                costo = float(productos_df.loc[productos_df["Producto"] == nuevo_producto, "Costo x ml"].values[0])
+                total = nuevo_ml * costo
 
-        st.markdown("### Productos del pedido")
-        productos_editados = []
-        for i, (prod, ml, costo, total) in enumerate(productos_pedido):
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                nuevo_ml = st.number_input(f"{prod} - ML", value=ml, min_value=0.0, step=0.5, key=f"ml_edit_{i}")
-            with col2:
-                nuevo_total = nuevo_ml * costo
-                st.write(f"Total: ${nuevo_total:.2f}")
-            productos_editados.append((prod, nuevo_ml, costo, nuevo_total))
-
-        if st.button("💾 Guardar cambios"):
-            # Eliminar pedido original
-            pedidos_df.drop(pedidos_df[pedidos_df["# Pedido"] == pedido_id].index, inplace=True)
-
-            # Insertar filas actualizadas
-            nuevas_filas = []
-            for prod, ml, costo, total in productos_editados:
-                nuevas_filas.append({
-                    "# Pedido": pedido_id,
-                    "Nombre Cliente": pedido_editar.iloc[0]["Nombre Cliente"],
-                    "Fecha": pedido_editar.iloc[0]["Fecha"],
-                    "Producto": prod,
-                    "Mililitros": ml,
+                nueva_fila = {
+                    "# Pedido": pedido_id_sel,
+                    "Nombre Cliente": pedido_seleccionado["Nombre Cliente"].iloc[0],
+                    "Fecha": pedido_seleccionado["Fecha"].iloc[0],
+                    "Producto": nuevo_producto,
+                    "Mililitros": nuevo_ml,
                     "Costo x ml": costo,
                     "Total": total,
                     "Estatus": nuevo_estatus
-                })
+                }
 
-            pedidos_df = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
-            guardar_pedidos(pedidos_df)
-            st.success("✅ Pedido actualizado correctamente.")
-            del st.session_state.editar_pedido_id
-            st.experimental_rerun()
+                pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nueva_fila])], ignore_index=True)
 
-        if st.button("❌ Cancelar"):
-            del st.session_state.editar_pedido_id
-            st.experimental_rerun()
+                idx = productos_df[productos_df["Producto"] == nuevo_producto].index[0]
+                productos_df.at[idx, "Stock disponible"] -= nuevo_ml
+
+                guardar_pedidos(pedidos_df)
+                guardar_productos(productos_df)
+
+                st.success("Producto agregado y pedido actualizado.")
+
+            if st.button("Actualizar Estatus del Pedido"):
+                pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
+                guardar_pedidos(pedidos_df)
+                st.success("Estatus actualizado.")
+else:
+    st.info("No se encontraron pedidos con ese nombre.")
 
 
