@@ -385,4 +385,75 @@ if not pedidos_filtrados.empty:
 else:
     st.info("No se encontraron pedidos con ese nombre.")
 
+# === Historial por Cliente con Edición y PDF ===
+st.subheader("📋 Historial de Pedidos por Cliente")
+
+nombre_cliente_filtro = st.text_input("Buscar cliente por nombre")
+pedidos_filtrados = pedidos_df[pedidos_df["Nombre Cliente"].str.contains(nombre_cliente_filtro, case=False, na=False)]
+
+if not pedidos_filtrados.empty:
+    st.dataframe(pedidos_filtrados, use_container_width=True)
+
+    pedido_ids = pedidos_filtrados["# Pedido"].unique().tolist()
+    pedido_id_sel = st.selectbox("Selecciona un pedido para editar", pedido_ids)
+
+    pedido_seleccionado = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]
+
+    if not pedido_seleccionado.empty:
+        with st.expander(f"✏️ Editar Pedido #{pedido_id_sel}"):
+            nuevo_estatus = st.selectbox("Nuevo Estatus", 
+                                         ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"], 
+                                         index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(
+                                             pedido_seleccionado["Estatus"].iloc[-1]
+                                         ))
+
+            nuevo_producto = st.selectbox("Agregar Producto", productos_df["Producto"].unique())
+            nuevo_ml = st.number_input("Mililitros a agregar", min_value=0.0, step=1.0)
+
+            if st.button("Agregar Producto al Pedido"):
+                costo = float(productos_df.loc[productos_df["Producto"] == nuevo_producto, "Costo x ml"].values[0])
+                total = nuevo_ml * costo
+
+                nueva_fila = {
+                    "# Pedido": pedido_id_sel,
+                    "Nombre Cliente": pedido_seleccionado["Nombre Cliente"].iloc[0],
+                    "Fecha": pedido_seleccionado["Fecha"].iloc[0],
+                    "Producto": nuevo_producto,
+                    "Mililitros": nuevo_ml,
+                    "Costo x ml": costo,
+                    "Total": total,
+                    "Estatus": nuevo_estatus
+                }
+
+                pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nueva_fila])], ignore_index=True)
+
+                idx = productos_df[productos_df["Producto"] == nuevo_producto].index[0]
+                productos_df.at[idx, "Stock disponible"] -= nuevo_ml
+
+                guardar_pedidos(pedidos_df)
+                guardar_productos(productos_df)
+
+                st.success("✅ Producto agregado y pedido actualizado.")
+
+            if st.button("Actualizar Estatus del Pedido"):
+                pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
+                guardar_pedidos(pedidos_df)
+                st.success("✅ Estatus actualizado.")
+
+            st.markdown("---")
+            if st.button("📄 Generar PDF actualizado"):
+                productos_actualizados = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel][["Producto", "Mililitros", "Costo x ml", "Total"]].values.tolist()
+                cliente_pdf = pedido_seleccionado["Nombre Cliente"].iloc[0]
+                fecha_pdf = pedido_seleccionado["Fecha"].iloc[0]
+                estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]["Estatus"].iloc[-1]
+
+                pdf_bytes = generar_pdf(pedido_id_sel, cliente_pdf, fecha_pdf, estatus_pdf, productos_actualizados)
+                st.download_button(
+                    label="📥 Descargar PDF del pedido actualizado",
+                    data=pdf_bytes,
+                    file_name=f"Pedido_{pedido_id_sel}_{cliente_pdf.replace(' ', '')}.pdf",
+                    mime="application/pdf"
+                )
+else:
+    st.info("🔍 No se encontraron pedidos con ese nombre.")
 
