@@ -235,6 +235,7 @@ st.title("H DECANTS Pedidos")
 st.image("https://raw.githubusercontent.com/HarimEG/app-decants/072576bfb6326d13c6528c7723e8b4f85c2abc65/hdecants_logo.jpg", width=150)
 productos_df = cargar_productos()
 pedidos_df = cargar_pedidos()
+pedidos_df_global = pedidos_df.copy()
 pedido_id = int(pedidos_df["# Pedido"].max()) + 1 if not pedidos_df.empty else 1
 
 
