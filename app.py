@@ -354,33 +354,39 @@ if not pedidos_filtrados.empty:
                                              pedido_seleccionado["Estatus"].iloc[-1]
                                          ))
 
-            nuevo_producto = st.selectbox("Agregar Producto", productos_df["Producto"].unique())
-            nuevo_ml = st.number_input("Mililitros a agregar", min_value=0.0, step=1.0)
+       buscar_nombre = st.text_input("🔍 Buscar producto por nombre")
+productos_filtrados = productos_df[productos_df["Producto"].str.contains(buscar_nombre, case=False, na=False)]
 
-            if st.button("Agregar Producto al Pedido"):
-                costo = float(productos_df.loc[productos_df["Producto"] == nuevo_producto, "Costo x ml"].values[0])
-                total = nuevo_ml * costo
+if not productos_filtrados.empty:
+    nuevo_producto = st.selectbox("Selecciona producto", productos_filtrados["Producto"].tolist())
+    nuevo_ml = st.number_input("Mililitros a agregar", min_value=0.0, step=1.0)
 
-                nueva_fila = {
-                    "# Pedido": pedido_id_sel,
-                    "Nombre Cliente": pedido_seleccionado["Nombre Cliente"].iloc[0],
-                    "Fecha": pedido_seleccionado["Fecha"].iloc[0],
-                    "Producto": nuevo_producto,
-                    "Mililitros": nuevo_ml,
-                    "Costo x ml": costo,
-                    "Total": total,
-                    "Estatus": nuevo_estatus
-                }
+    if st.button("Agregar Producto al Pedido"):
+        costo = float(productos_df.loc[productos_df["Producto"] == nuevo_producto, "Costo x ml"].values[0])
+        total = nuevo_ml * costo
 
-                pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nueva_fila])], ignore_index=True)
+        nueva_fila = {
+            "# Pedido": pedido_id_sel,
+            "Nombre Cliente": pedido_seleccionado["Nombre Cliente"].iloc[0],
+            "Fecha": pedido_seleccionado["Fecha"].iloc[0],
+            "Producto": nuevo_producto,
+            "Mililitros": nuevo_ml,
+            "Costo x ml": costo,
+            "Total": total,
+            "Estatus": nuevo_estatus
+        }
 
-                idx = productos_df[productos_df["Producto"] == nuevo_producto].index[0]
-                productos_df.at[idx, "Stock disponible"] -= nuevo_ml
+        pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nueva_fila])], ignore_index=True)
 
-                guardar_pedidos(pedidos_df)
-                guardar_productos(productos_df)
+        idx = productos_df[productos_df["Producto"] == nuevo_producto].index[0]
+        productos_df.at[idx, "Stock disponible"] -= nuevo_ml
 
-                st.success("✅ Producto agregado y pedido actualizado.")
+        guardar_pedidos(pedidos_df)
+        guardar_productos(productos_df)
+
+        st.success("✅ Producto agregado correctamente.")
+else:
+    st.warning("❌ No hay productos que coincidan.")
 
             if st.button("Actualizar Estatus del Pedido"):
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
