@@ -354,7 +354,7 @@ if not pedidos_filtrados.empty:
                                              pedido_seleccionado["Estatus"].iloc[-1]
                                          ))
 
-       buscar_nombre = st.text_input("🔍 Buscar producto por nombre")
+buscar_nombre = st.text_input("🔍 Buscar producto por nombre")
 productos_filtrados = productos_df[productos_df["Producto"].str.contains(buscar_nombre, case=False, na=False)]
 
 if not productos_filtrados.empty:
