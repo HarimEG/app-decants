@@ -36,9 +36,6 @@ def guardar_pedidos(df):
     pedidos_ws.clear()
     pedidos_ws.update([df.columns.tolist()] + df.values.tolist())
 
-# Variables globales para poder modificar en funciones
-pedidos_df_global = pedidos_df.copy()
-productos_df_global = productos_df.copy()
 
 # === PDF ===
 import requests
