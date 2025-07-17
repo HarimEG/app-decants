@@ -157,7 +157,6 @@ if submit and st.session_state.productos:
         st.session_state.pedido_guardado = False
         st.rerun()
 
-# === Historial y Edición con edición y eliminación de productos ===
 st.subheader("📋 Historial de Pedidos por Cliente")
 nombre_cliente_filtro = st.text_input("Buscar cliente por nombre")
 
@@ -176,11 +175,13 @@ if not pedidos_filtrados.empty:
 
     if not pedido_seleccionado.empty:
         with st.expander(f"✏️ Editar Pedido #{pedido_id_sel}"):
-            nuevo_estatus = st.selectbox("Nuevo Estatus", 
-                                         ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"], 
-                                         index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(
-                                             pedido_seleccionado["Estatus"].iloc[-1]
-                                         ))
+            nuevo_estatus = st.selectbox(
+                "Nuevo Estatus",
+                ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"],
+                index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(
+                    pedido_seleccionado["Estatus"].iloc[-1]
+                )
+            )
 
             st.markdown("### Productos en el pedido:")
             productos_pedido = pedido_seleccionado.reset_index()
@@ -194,7 +195,7 @@ if not pedidos_filtrados.empty:
                     step=0.5,
                     value=float(row["Mililitros"]),
                     key=f"ml_{i}"
-                    )
+                )
                 cols[2].write(f"${row['Costo x ml']:.2f}")
                 cols[3].write(f"${row['Total']:.2f}")
 
@@ -211,14 +212,15 @@ if not pedidos_filtrados.empty:
                         pedidos_df.at[row["index"], "Total"] = ml_edit * row["Costo x ml"]
                         guardar_pedidos(pedidos_df)
                         guardar_productos(productos_df)
-                        st.success(f"Cantidad del producto '{row['Producto']}' actualizada.")
-                        
+
+                        st.session_state["mensaje_accion"] = f"Cantidad del producto '{row['Producto']}' actualizada."
+                        st.session_state["recarga"] = True
 
                 # Eliminar producto
                 if cols[5].button("🗑️", key=f"delete_{i}"):
                     idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
                     productos_df.at[idx_prod, "Stock disponible"] += row["Mililitros"]
-                
+
                     pedidos_df = pedidos_df.drop(
                         pedidos_df[
                             (pedidos_df["# Pedido"] == pedido_id_sel) & 
@@ -226,36 +228,36 @@ if not pedidos_filtrados.empty:
                             (pedidos_df["Mililitros"] == row["Mililitros"])
                         ].index
                     )
-                
+
                     guardar_pedidos(pedidos_df)
                     guardar_productos(productos_df)
-                    
-                    st.session_state["mensaje_eliminar"] = f"Producto '{row['Producto']}' eliminado del pedido."
-                    st.experimental_rerun()
-                
-                if "mensaje_eliminar" in st.session_state:
-                    st.success(st.session_state["mensaje_eliminar"])
-                    del st.session_state["mensaje_eliminar"]
 
+                    st.session_state["mensaje_accion"] = f"Producto '{row['Producto']}' eliminado del pedido."
+                    st.session_state["recarga"] = True
 
-
-
+            # Mostrar mensaje si existe
+            if "mensaje_accion" in st.session_state:
+                st.success(st.session_state["mensaje_accion"])
+                del st.session_state["mensaje_accion"]
 
             if st.button("Actualizar Estatus del Pedido"):
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
                 guardar_pedidos(pedidos_df)
                 st.success("✅ Estatus actualizado.")
-                st.experimental_rerun()
+                st.session_state["recarga"] = True
 
             st.markdown("---")
+
             if st.button("📄 Generar PDF actualizado"):
-                productos_actualizados = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel][["Producto", "Mililitros", "Costo x ml", "Total"]].values.tolist()
+                productos_actualizados = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel][
+                    ["Producto", "Mililitros", "Costo x ml", "Total"]
+                ].values.tolist()
                 cliente_pdf = pedido_seleccionado["Nombre Cliente"].iloc[0]
                 fecha_pdf = pedido_seleccionado["Fecha"].iloc[0]
                 estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]["Estatus"].iloc[-1]
-            
+
                 pdf_bytes = generar_pdf(pedido_id_sel, cliente_pdf, fecha_pdf, estatus_pdf, productos_actualizados)
-            
+
                 st.download_button(
                     label="📥 Descargar PDF del pedido actualizado",
                     data=pdf_bytes,
@@ -263,3 +265,7 @@ if not pedidos_filtrados.empty:
                     mime="application/pdf"
                 )
 
+# Al final del código principal, para manejar la recarga y evitar múltiples rerun inmediatos
+if "recarga" in st.session_state and st.session_state["recarga"]:
+    st.session_state["recarga"] = False
+    st.experimental_rerun()
