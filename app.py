@@ -157,7 +157,7 @@ if submit and st.session_state.productos:
         st.session_state.pedido_guardado = False
         st.rerun()
 
-# === Historial y Edición ===
+# === Historial y Edición con edición y eliminación de productos ===
 st.subheader("📋 Historial de Pedidos por Cliente")
 nombre_cliente_filtro = st.text_input("Buscar cliente por nombre")
 
@@ -182,43 +182,48 @@ if not pedidos_filtrados.empty:
                                              pedido_seleccionado["Estatus"].iloc[-1]
                                          ))
 
-            buscar_nombre = st.text_input("🔍 Buscar producto por nombre")
-            productos_filtrados = productos_df[productos_df["Producto"].str.contains(buscar_nombre, case=False, na=False)]
+            st.markdown("### Productos en el pedido:")
+            productos_pedido = pedido_seleccionado.reset_index()
 
-            if not productos_filtrados.empty:
-                nuevo_producto = st.selectbox("Selecciona producto", productos_filtrados["Producto"].tolist())
-                nuevo_ml = st.number_input("Mililitros a agregar", min_value=0.0, step=1.0)
+            for i, row in productos_pedido.iterrows():
+                cols = st.columns([3, 2, 2, 2, 1, 1])
+                cols[0].write(row["Producto"])
+                ml_edit = cols[1].number_input(f"Mililitros (Producto {i})", min_value=0.0, step=0.5, value=row["Mililitros"], key=f"ml_{i}")
+                cols[2].write(f"${row['Costo x ml']:.2f}")
+                cols[3].write(f"${row['Total']:.2f}")
 
-                if st.button("Agregar Producto al Pedido"):
-                    costo = float(productos_df.loc[productos_df["Producto"] == nuevo_producto, "Costo x ml"].values[0])
-                    total = nuevo_ml * costo
+                # Actualizar cantidad
+                if cols[4].button("✏️", key=f"update_{i}"):
+                    diferencia_ml = ml_edit - row["Mililitros"]
+                    idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
 
-                    nueva_fila = {
-                        "# Pedido": pedido_id_sel,
-                        "Nombre Cliente": pedido_seleccionado["Nombre Cliente"].iloc[0],
-                        "Fecha": pedido_seleccionado["Fecha"].iloc[0],
-                        "Producto": nuevo_producto,
-                        "Mililitros": nuevo_ml,
-                        "Costo x ml": costo,
-                        "Total": total,
-                        "Estatus": nuevo_estatus
-                    }
+                    if diferencia_ml > productos_df.at[idx_prod, "Stock disponible"]:
+                        st.error("No hay stock suficiente para aumentar la cantidad.")
+                    else:
+                        productos_df.at[idx_prod, "Stock disponible"] -= diferencia_ml
+                        pedidos_df.at[row["index"], "Mililitros"] = ml_edit
+                        pedidos_df.at[row["index"], "Total"] = ml_edit * row["Costo x ml"]
+                        guardar_pedidos(pedidos_df)
+                        guardar_productos(productos_df)
+                        st.success(f"Cantidad del producto '{row['Producto']}' actualizada.")
+                        st.experimental_rerun()
 
-                    pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nueva_fila])], ignore_index=True)
-
-                    idx = productos_df[productos_df["Producto"] == nuevo_producto].index[0]
-                    productos_df.at[idx, "Stock disponible"] -= nuevo_ml
-
+                # Eliminar producto
+                if cols[5].button("🗑️", key=f"delete_{i}"):
+                    idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
+                    productos_df.at[idx_prod, "Stock disponible"] += row["Mililitros"]
+                    pedidos_df.drop(row["index"], inplace=True)
                     guardar_pedidos(pedidos_df)
                     guardar_productos(productos_df)
-
-                    st.success("✅ Producto agregado correctamente.")
+                    st.success(f"Producto '{row['Producto']}' eliminado del pedido.")
+                    st.experimental_rerun()
 
             if st.button("Actualizar Estatus del Pedido"):
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
                 guardar_pedidos(pedidos_df)
                 st.success("✅ Estatus actualizado.")
 
+            st.markdown("---")
             if st.button("📄 Generar PDF actualizado"):
                 productos_actualizados = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel][["Producto", "Mililitros", "Costo x ml", "Total"]].values.tolist()
                 cliente_pdf = pedido_seleccionado["Nombre Cliente"].iloc[0]
