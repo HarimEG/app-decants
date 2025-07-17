@@ -230,8 +230,12 @@ if not pedidos_filtrados.empty:
                 
                     guardar_pedidos(pedidos_df)
                     guardar_productos(productos_df)
-                    st.success(f"Producto '{row['Producto']}' eliminado del pedido.")
+                    
+                    # En vez de st.success aquí, puedes mostrar un mensaje justo antes del botón o en otro lugar
+                    # st.success(f"Producto '{row['Producto']}' eliminado del pedido.") 
+                
                     st.experimental_rerun()
+
 
 
             if st.button("Actualizar Estatus del Pedido"):
