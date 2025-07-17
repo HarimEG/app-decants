@@ -232,12 +232,15 @@ if not pedidos_filtrados.empty:
                     guardar_productos(productos_df)
                     
                     # En vez de st.success aquí, puedes mostrar un mensaje justo antes del botón o en otro lugar
-                   st.session_state["mensaje_eliminar"] = f"Producto '{row['Producto']}' eliminado del pedido."
-                   st.experimental_rerun()
+                   if cols[5].button("🗑️", key=f"delete_{i}"):
+                    # Código de eliminación...
+                    st.session_state["mensaje_eliminar"] = f"Producto '{row['Producto']}' eliminado del pedido."
+                    st.experimental_rerun()
                 
                 if "mensaje_eliminar" in st.session_state:
                     st.success(st.session_state["mensaje_eliminar"])
                     del st.session_state["mensaje_eliminar"]
+
 
 
 
