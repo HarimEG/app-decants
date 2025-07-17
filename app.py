@@ -236,7 +236,7 @@ if not pedidos_filtrados.empty:
                 
                  if "mensaje_eliminar" in st.session_state:
                     st.success(st.session_state["mensaje_eliminar"])
-                     del st.session_state["mensaje_eliminar"]
+                    del st.session_state["mensaje_eliminar"]
 
 
 
