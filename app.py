@@ -7,6 +7,7 @@ from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 from datetime import datetime
 import base64
+import streamlit.runtime.legacy as legacy
 
 # === Autenticación Google Sheets ===
 scope = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -157,6 +158,7 @@ if submit and st.session_state.productos:
         st.session_state.pedido_guardado = False
         st.rerun()
 
+# === Historial y Edición con edición y eliminación de productos ===
 st.subheader("📋 Historial de Pedidos por Cliente")
 nombre_cliente_filtro = st.text_input("Buscar cliente por nombre")
 
@@ -176,8 +178,8 @@ if not pedidos_filtrados.empty:
     if not pedido_seleccionado.empty:
         with st.expander(f"✏️ Editar Pedido #{pedido_id_sel}"):
             nuevo_estatus = st.selectbox(
-                "Nuevo Estatus",
-                ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"],
+                "Nuevo Estatus", 
+                ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"], 
                 index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(
                     pedido_seleccionado["Estatus"].iloc[-1]
                 )
@@ -212,9 +214,8 @@ if not pedidos_filtrados.empty:
                         pedidos_df.at[row["index"], "Total"] = ml_edit * row["Costo x ml"]
                         guardar_pedidos(pedidos_df)
                         guardar_productos(productos_df)
-
-                        st.session_state["mensaje_accion"] = f"Cantidad del producto '{row['Producto']}' actualizada."
-                        st.session_state["recarga"] = True
+                        st.success(f"Cantidad del producto '{row['Producto']}' actualizada.")
+                        legacy.rerun()
 
                 # Eliminar producto
                 if cols[5].button("🗑️", key=f"delete_{i}"):
@@ -231,27 +232,21 @@ if not pedidos_filtrados.empty:
 
                     guardar_pedidos(pedidos_df)
                     guardar_productos(productos_df)
+                    st.success(f"Producto '{row['Producto']}' eliminado del pedido.")
+                    legacy.rerun()
 
-                    st.session_state["mensaje_accion"] = f"Producto '{row['Producto']}' eliminado del pedido."
-                    st.session_state["recarga"] = True
-
-            # Mostrar mensaje si existe
-            if "mensaje_accion" in st.session_state:
-                st.success(st.session_state["mensaje_accion"])
-                del st.session_state["mensaje_accion"]
-
+            # Botón para actualizar estatus general del pedido
             if st.button("Actualizar Estatus del Pedido"):
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
                 guardar_pedidos(pedidos_df)
                 st.success("✅ Estatus actualizado.")
-                st.session_state["recarga"] = True
+                legacy.rerun()
 
             st.markdown("---")
 
+            # Botón para generar PDF actualizado
             if st.button("📄 Generar PDF actualizado"):
-                productos_actualizados = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel][
-                    ["Producto", "Mililitros", "Costo x ml", "Total"]
-                ].values.tolist()
+                productos_actualizados = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel][["Producto", "Mililitros", "Costo x ml", "Total"]].values.tolist()
                 cliente_pdf = pedido_seleccionado["Nombre Cliente"].iloc[0]
                 fecha_pdf = pedido_seleccionado["Fecha"].iloc[0]
                 estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]["Estatus"].iloc[-1]
@@ -264,13 +259,3 @@ if not pedidos_filtrados.empty:
                     file_name=f"Pedido_{pedido_id_sel}_{cliente_pdf.replace(' ', '')}.pdf",
                     mime="application/pdf"
                 )
-
-# Al final del código principal, para manejar la recarga y evitar múltiples rerun inmediatos
-if st.session_state.get("recarga", False):
-    st.session_state["recarga"] = False
-    # Usar try-except para capturar el error y no romper la app
-    try:
-        st.experimental_rerun()
-    except Exception as e:
-        st.warning(f"No se pudo recargar la app automáticamente: {e}")
-
