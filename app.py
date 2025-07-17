@@ -188,7 +188,13 @@ if not pedidos_filtrados.empty:
             for i, row in productos_pedido.iterrows():
                 cols = st.columns([3, 2, 2, 2, 1, 1])
                 cols[0].write(row["Producto"])
-                ml_edit = cols[1].number_input(f"Mililitros (Producto {i})", min_value=0.0, step=0.5, value=row["Mililitros"], key=f"ml_{i}")
+                ml_edit = cols[1].number_input(
+                    f"Mililitros (Producto {i})",
+                    min_value=0.0,
+                    step=0.5,
+                    value=float(row["Mililitros"]),
+                    key=f"ml_{i}"
+                    )
                 cols[2].write(f"${row['Costo x ml']:.2f}")
                 cols[3].write(f"${row['Total']:.2f}")
 
