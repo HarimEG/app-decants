@@ -228,6 +228,7 @@ if not pedidos_filtrados.empty:
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
                 guardar_pedidos(pedidos_df)
                 st.success("✅ Estatus actualizado.")
+                st.experimental_rerun()
 
             st.markdown("---")
             if st.button("📄 Generar PDF actualizado"):
@@ -236,10 +237,13 @@ if not pedidos_filtrados.empty:
                 fecha_pdf = pedido_seleccionado["Fecha"].iloc[0]
                 estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]["Estatus"].iloc[-1]
 
+                
                 pdf_bytes = generar_pdf(pedido_id_sel, cliente_pdf, fecha_pdf, estatus_pdf, productos_actualizados)
+                st.experimental_rerun()
                 st.download_button(
                     label="📥 Descargar PDF del pedido actualizado",
                     data=pdf_bytes,
                     file_name=f"Pedido_{pedido_id_sel}_{cliente_pdf.replace(' ', '')}.pdf",
                     mime="application/pdf"
                 )
+                st.experimental_rerun()
