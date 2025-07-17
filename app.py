@@ -219,7 +219,6 @@ if not pedidos_filtrados.empty:
                     idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
                     productos_df.at[idx_prod, "Stock disponible"] += row["Mililitros"]
                 
-                    # Eliminar fila exacta del pedido
                     pedidos_df = pedidos_df.drop(
                         pedidos_df[
                             (pedidos_df["# Pedido"] == pedido_id_sel) & 
@@ -234,9 +233,10 @@ if not pedidos_filtrados.empty:
                     st.session_state["mensaje_eliminar"] = f"Producto '{row['Producto']}' eliminado del pedido."
                     st.experimental_rerun()
                 
-                 if "mensaje_eliminar" in st.session_state:
+                if "mensaje_eliminar" in st.session_state:
                     st.success(st.session_state["mensaje_eliminar"])
                     del st.session_state["mensaje_eliminar"]
+
 
 
 
