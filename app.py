@@ -266,6 +266,11 @@ if not pedidos_filtrados.empty:
                 )
 
 # Al final del código principal, para manejar la recarga y evitar múltiples rerun inmediatos
-if "recarga" in st.session_state and st.session_state["recarga"]:
+if st.session_state.get("recarga", False):
     st.session_state["recarga"] = False
-    st.experimental_rerun()
+    # Usar try-except para capturar el error y no romper la app
+    try:
+        st.experimental_rerun()
+    except Exception as e:
+        st.warning(f"No se pudo recargar la app automáticamente: {e}")
+
