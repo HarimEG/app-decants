@@ -157,7 +157,7 @@ if submit and st.session_state.productos:
         st.session_state.productos = []
         st.session_state.pedido_guardado = False
         st.rerun()
-import streamlit.runtime.legacy as legacy
+
 # === Historial y Edición con edición y eliminación de productos ===
 st.subheader("📋 Historial de Pedidos por Cliente")
 nombre_cliente_filtro = st.text_input("Buscar cliente por nombre")
