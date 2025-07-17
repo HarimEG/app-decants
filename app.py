@@ -212,17 +212,27 @@ if not pedidos_filtrados.empty:
                         guardar_pedidos(pedidos_df)
                         guardar_productos(productos_df)
                         st.success(f"Cantidad del producto '{row['Producto']}' actualizada.")
-                        st.experimental_rerun()
+                        
 
                 # Eliminar producto
                 if cols[5].button("🗑️", key=f"delete_{i}"):
                     idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
                     productos_df.at[idx_prod, "Stock disponible"] += row["Mililitros"]
-                    pedidos_df.drop(row["index"], inplace=True)
+                
+                    # Eliminar fila exacta del pedido
+                    pedidos_df = pedidos_df.drop(
+                        pedidos_df[
+                            (pedidos_df["# Pedido"] == pedido_id_sel) & 
+                            (pedidos_df["Producto"] == row["Producto"]) & 
+                            (pedidos_df["Mililitros"] == row["Mililitros"])
+                        ].index
+                    )
+                
                     guardar_pedidos(pedidos_df)
                     guardar_productos(productos_df)
                     st.success(f"Producto '{row['Producto']}' eliminado del pedido.")
                     st.experimental_rerun()
+
 
             if st.button("Actualizar Estatus del Pedido"):
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
