@@ -130,7 +130,7 @@ if submit and st.session_state.productos:
             "Total": total,
             "Estatus": estatus
         })
-        idx = productos_df[productos_df["Producto"] == prod].index[1]
+        idx = productos_df[productos_df["Producto"] == prod].index[0]
         productos_df.at[idx, "Stock disponible"] -= ml
 
     df_nuevo = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
