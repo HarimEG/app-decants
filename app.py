@@ -96,7 +96,7 @@ with st.form("formulario"):
         opciones_filtradas = productos_df[productos_df["Producto"].str.contains(search_term, case=False, na=False)]["Producto"].tolist()
         producto = st.selectbox("Producto", opciones_filtradas if opciones_filtradas else ["Ningún resultado"])
     with col2:
-        ml = st.number_input("Mililitros", min_value=0.0, step=1.0)
+        ml = st.number_input("Mililitros", min_value=0, step=1)
 
     agregar = st.form_submit_button("Agregar producto")
 
@@ -130,7 +130,7 @@ if submit and st.session_state.productos:
             "Total": total,
             "Estatus": estatus
         })
-        idx = productos_df[productos_df["Producto"] == prod].index[0]
+        idx = productos_df[productos_df["Producto"] == prod].index[1]
         productos_df.at[idx, "Stock disponible"] -= ml
 
     df_nuevo = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
