@@ -268,30 +268,31 @@ if not pedidos_filtrados.empty:
                             productos_df.at[idx, "Stock disponible"] -= nuevo_ml
                             nuevo_registro = {
                                 "# Pedido": pedido_id_sel,
-                                "Nombre Cliente": cliente_pdf,
-                                "Fecha": fecha_pdf,
+                                "Nombre Cliente": pedido_seleccionado["Nombre Cliente"].iloc[0],
+                                "Fecha": pedido_seleccionado["Fecha"].iloc[0],
                                 "Producto": nuevo_producto,
                                 "Mililitros": nuevo_ml,
                                 "Costo x ml": costo,
                                 "Total": total,
-                                "Estatus": estatus_pdf
+                                "Estatus": pedido_seleccionado["Estatus"].iloc[-1]
                             }
                             pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nuevo_registro])], ignore_index=True)
                             guardar_pedidos(pedidos_df)
                             guardar_productos(productos_df)
                             st.success(f"Producto '{nuevo_producto}' agregado al pedido.")
                             st.session_state["recarga"] = True
-      
-
-            if "mensaje_accion" in st.session_state:
-                st.success(st.session_state["mensaje_accion"])
-                del st.session_state["mensaje_accion"]
-
-            if st.button("Actualizar Estatus del Pedido"):
-                pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
-                guardar_pedidos(pedidos_df)
-                st.success("✅ Estatus actualizado.")
-                st.session_state["recarga"] = True
+                
+                      
+                
+                            if "mensaje_accion" in st.session_state:
+                                st.success(st.session_state["mensaje_accion"])
+                                del st.session_state["mensaje_accion"]
+                
+                            if st.button("Actualizar Estatus del Pedido"):
+                                pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
+                                guardar_pedidos(pedidos_df)
+                                st.success("✅ Estatus actualizado.")
+                                st.session_state["recarga"] = True
 
             st.markdown("---")
             if st.button("📄 Generar PDF actualizado"):
