@@ -20,7 +20,7 @@ productos_ws = sheet.worksheet("Productos")
 pedidos_ws = sheet.worksheet("Pedidos")
 envios_ws = sheet.worksheet("Envios")  # Nueva hoja para datos de envío
 
-# === Cargar datos ===
+# === Funciones ===
 def cargar_productos():
     return pd.DataFrame(productos_ws.get_all_records())
 
@@ -38,7 +38,6 @@ def guardar_pedidos(df):
 def guardar_envio(data):
     envios_ws.append_row(data)
 
-# === PDF ===
 def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf = FPDF()
     pdf.add_page()
@@ -74,10 +73,9 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf.cell(120, 10, "TOTAL GENERAL", 1, 0, 'R', fill=True)
     pdf.cell(30, 10, f"${total_general:.2f}", 1, 1, 'C', fill=True)
 
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
-    return pdf_bytes
+    return pdf.output(dest='S').encode('latin1')
 
-# === Streamlit App ===
+# === Streamlit UI ===
 st.set_page_config(page_title="App Decants", layout="centered")
 st.title("H DECANTS Pedidos")
 st.image("https://raw.githubusercontent.com/HarimEG/app-decants/072576bfb6326d13c6528c7723e8b4f85c2abc65/hdecants_logo.jpg", width=150)
@@ -129,7 +127,6 @@ with st.form("formulario"):
             st.session_state.productos.append((producto, ml, costo, total))
 
     if st.session_state.productos:
-        st.session_state.pedido_guardado = True
         st.markdown("### Productos en el pedido")
         st.table(pd.DataFrame(st.session_state.productos, columns=["Producto", "ML", "Costo", "Total"]))
 
@@ -162,8 +159,7 @@ if submit and st.session_state.productos:
 
     pdf_bytes = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
     b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    href = f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank">Ver PDF en nueva pestaña</a>'
-    st.markdown(href, unsafe_allow_html=True)
+    st.markdown(f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank">Ver PDF en nueva pestaña</a>', unsafe_allow_html=True)
 
     st.download_button(
         label="⬇️ Descargar PDF del pedido",
@@ -172,10 +168,112 @@ if submit and st.session_state.productos:
         mime="application/pdf"
     )
 
-    st.markdown("---")
     if st.button("🔁 Registrar otro pedido"):
         st.session_state.productos = []
-        st.session_state.pedido_guardado = False
         st.rerun()
 
-# Resto de la app (historial, edición, PDF, etc) permanece igual
+# === Historial de Pedidos por Cliente ===
+st.subheader("📋 Historial de Pedidos por Cliente")
+nombre_cliente_filtro = st.text_input("Buscar cliente por nombre")
+
+if nombre_cliente_filtro:
+    pedidos_filtrados = pedidos_df[pedidos_df["Nombre Cliente"].str.contains(nombre_cliente_filtro, case=False, na=False)]
+else:
+    pedidos_filtrados = pedidos_df
+
+st.dataframe(pedidos_filtrados, use_container_width=True)
+
+if not pedidos_filtrados.empty:
+    pedido_ids = pedidos_filtrados["# Pedido"].unique().tolist()
+    pedido_id_sel = st.selectbox("Selecciona un pedido para editar", pedido_ids)
+
+    pedido_seleccionado = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]
+
+    if not pedido_seleccionado.empty:
+        with st.expander(f"✏️ Editar Pedido #{pedido_id_sel}"):
+            nuevo_estatus = st.selectbox(
+                "Nuevo Estatus",
+                ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"],
+                index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(
+                    pedido_seleccionado["Estatus"].iloc[-1]
+                )
+            )
+
+            st.markdown("### Productos en el pedido:")
+            productos_pedido = pedido_seleccionado.reset_index()
+
+            for i, row in productos_pedido.iterrows():
+                cols = st.columns([3, 2, 2, 2, 1, 1])
+                cols[1].write(row["Producto"])
+                ml_edit = cols[1].number_input(
+                    f"Mililitros (Producto {i})",
+                    min_value=0.0,
+                    step=0.5,
+                    value=float(row["Mililitros"]),
+                    key=f"ml_{i}"
+                )
+                cols[2].write(f"${row['Costo x ml']:.2f}")
+                cols[3].write(f"${row['Total']:.2f}")
+
+                if cols[4].button("✏️", key=f"update_{i}"):
+                    diferencia_ml = ml_edit - row["Mililitros"]
+                    idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
+                    if diferencia_ml > productos_df.at[idx_prod, "Stock disponible"]:
+                        st.error("No hay stock suficiente para aumentar la cantidad.")
+                    else:
+                        productos_df.at[idx_prod, "Stock disponible"] -= diferencia_ml
+                        pedidos_df.at[row["index"], "Mililitros"] = ml_edit
+                        pedidos_df.at[row["index"], "Total"] = ml_edit * row["Costo x ml"]
+                        guardar_pedidos(pedidos_df)
+                        guardar_productos(productos_df)
+                        st.session_state["mensaje_accion"] = f"Cantidad del producto '{row['Producto']}' actualizada."
+                        st.session_state["recarga"] = True
+
+                if cols[5].button("🗑️", key=f"delete_{i}"):
+                    idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
+                    productos_df.at[idx_prod, "Stock disponible"] += row["Mililitros"]
+                    pedidos_df = pedidos_df.drop(
+                        pedidos_df[
+                            (pedidos_df["# Pedido"] == pedido_id_sel) & 
+                            (pedidos_df["Producto"] == row["Producto"]) & 
+                            (pedidos_df["Mililitros"] == row["Mililitros"])
+                        ].index
+                    )
+                    guardar_pedidos(pedidos_df)
+                    guardar_productos(productos_df)
+                    st.session_state["mensaje_accion"] = f"Producto '{row['Producto']}' eliminado del pedido."
+                    st.session_state["recarga"] = True
+
+            if "mensaje_accion" in st.session_state:
+                st.success(st.session_state["mensaje_accion"])
+                del st.session_state["mensaje_accion"]
+
+            if st.button("Actualizar Estatus del Pedido"):
+                pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
+                guardar_pedidos(pedidos_df)
+                st.success("✅ Estatus actualizado.")
+                st.session_state["recarga"] = True
+
+            st.markdown("---")
+            if st.button("📄 Generar PDF actualizado"):
+                productos_actualizados = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel][
+                    ["Producto", "Mililitros", "Costo x ml", "Total"]
+                ].values.tolist()
+                cliente_pdf = pedido_seleccionado["Nombre Cliente"].iloc[0]
+                fecha_pdf = pedido_seleccionado["Fecha"].iloc[0]
+                estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]["Estatus"].iloc[-1]
+                pdf_bytes = generar_pdf(pedido_id_sel, cliente_pdf, fecha_pdf, estatus_pdf, productos_actualizados)
+                st.download_button(
+                    label="📥 Descargar PDF del pedido actualizado",
+                    data=pdf_bytes,
+                    file_name=f"Pedido_{pedido_id_sel}_{cliente_pdf.replace(' ', '')}.pdf",
+                    mime="application/pdf"
+                )
+
+# Control de recarga segura
+if st.session_state.get("recarga", False):
+    st.session_state["recarga"] = False
+    try:
+        st.experimental_rerun()
+    except Exception as e:
+        st.warning(f"No se pudo recargar la app automáticamente: {e}")
