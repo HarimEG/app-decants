@@ -244,6 +244,45 @@ if not pedidos_filtrados.empty:
                     st.session_state["mensaje_accion"] = f"Producto '{row['Producto']}' eliminado del pedido."
                     st.session_state["recarga"] = True
 
+                 # === Agregar nuevo producto al pedido existente ===
+                st.markdown("### ➕ Agregar nuevo producto al pedido")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    search_term_edit = st.text_input(f"Buscar producto nuevo", key="search_nuevo")
+                    opciones_nuevas = productos_df[productos_df["Producto"].str.contains(search_term_edit, case=False, na=False)]["Producto"].tolist()
+                    nuevo_producto = st.selectbox("Producto", opciones_nuevas if opciones_nuevas else ["Ningún resultado"], key="nuevo_producto_sel")
+                with col2:
+                    nuevo_ml = st.number_input("Mililitros", min_value=0.0, step=0.5, key="nuevo_ml")
+                
+                if st.button("Agregar nuevo producto al pedido"):
+                    fila_nueva = productos_df[productos_df["Producto"] == nuevo_producto]
+                    if not fila_nueva.empty:
+                        idx = fila_nueva.index[0]
+                        costo = float(fila_nueva["Costo x ml"].values[0])
+                        total = nuevo_ml * costo
+                
+                        if nuevo_ml > productos_df.at[idx, "Stock disponible"]:
+                            st.error("No hay stock suficiente para agregar este producto.")
+                        else:
+                            productos_df.at[idx, "Stock disponible"] -= nuevo_ml
+                            nuevo_registro = {
+                                "# Pedido": pedido_id_sel,
+                                "Nombre Cliente": cliente_pdf,
+                                "Fecha": fecha_pdf,
+                                "Producto": nuevo_producto,
+                                "Mililitros": nuevo_ml,
+                                "Costo x ml": costo,
+                                "Total": total,
+                                "Estatus": estatus_pdf
+                            }
+                            pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nuevo_registro])], ignore_index=True)
+                            guardar_pedidos(pedidos_df)
+                            guardar_productos(productos_df)
+                            st.success(f"Producto '{nuevo_producto}' agregado al pedido.")
+                            st.session_state["recarga"] = True
+      
+
             if "mensaje_accion" in st.session_state:
                 st.success(st.session_state["mensaje_accion"])
                 del st.session_state["mensaje_accion"]
@@ -269,44 +308,7 @@ if not pedidos_filtrados.empty:
                     file_name=f"Pedido_{pedido_id_sel}_{cliente_pdf.replace(' ', '')}.pdf",
                     mime="application/pdf"
                 )
-              # === Agregar nuevo producto al pedido existente ===
-            st.markdown("### ➕ Agregar nuevo producto al pedido")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                search_term_edit = st.text_input(f"Buscar producto nuevo", key="search_nuevo")
-                opciones_nuevas = productos_df[productos_df["Producto"].str.contains(search_term_edit, case=False, na=False)]["Producto"].tolist()
-                nuevo_producto = st.selectbox("Producto", opciones_nuevas if opciones_nuevas else ["Ningún resultado"], key="nuevo_producto_sel")
-            with col2:
-                nuevo_ml = st.number_input("Mililitros", min_value=0.0, step=0.5, key="nuevo_ml")
-            
-            if st.button("Agregar nuevo producto al pedido"):
-                fila_nueva = productos_df[productos_df["Producto"] == nuevo_producto]
-                if not fila_nueva.empty:
-                    idx = fila_nueva.index[0]
-                    costo = float(fila_nueva["Costo x ml"].values[0])
-                    total = nuevo_ml * costo
-            
-                    if nuevo_ml > productos_df.at[idx, "Stock disponible"]:
-                        st.error("No hay stock suficiente para agregar este producto.")
-                    else:
-                        productos_df.at[idx, "Stock disponible"] -= nuevo_ml
-                        nuevo_registro = {
-                            "# Pedido": pedido_id_sel,
-                            "Nombre Cliente": cliente_pdf,
-                            "Fecha": fecha_pdf,
-                            "Producto": nuevo_producto,
-                            "Mililitros": nuevo_ml,
-                            "Costo x ml": costo,
-                            "Total": total,
-                            "Estatus": estatus_pdf
-                        }
-                        pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nuevo_registro])], ignore_index=True)
-                        guardar_pedidos(pedidos_df)
-                        guardar_productos(productos_df)
-                        st.success(f"Producto '{nuevo_producto}' agregado al pedido.")
-                        st.session_state["recarga"] = True
-  
+             
 
 # Control de recarga segura
 if st.session_state.get("recarga", False):
