@@ -71,7 +71,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     return pdf.output(dest='S').encode('latin1')
 
 
-# === Interfaz Streamlit ===
+# === UI Streamlit ===
 st.set_page_config(page_title="App Decants", layout="centered")
 st.image("https://raw.githubusercontent.com/HarimEG/app-decants/072576bfb6326d13c6528c7723e8b4f85c2abc65/hdecants_logo.jpg", width=150)
 st.title("H DECANTS Pedidos")
@@ -84,7 +84,6 @@ tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial de Pedidos", "�
 
 # === TAB 1 ===
 with tab1:
-    # Reset al iniciar si se marcó una nueva sesión
     if st.session_state.get("nueva_sesion", False):
         st.session_state.productos = []
         st.session_state.nueva_sesion = False
@@ -93,6 +92,7 @@ with tab1:
         cliente = st.text_input("👤 Nombre del Cliente")
         fecha = st.date_input("📅 Fecha del pedido", value=datetime.today())
         estatus = st.selectbox("📌 Estatus", ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"])
+
         requiere_envio = st.checkbox("¿Requiere envío?")
         datos_envio = []
         if requiere_envio:
@@ -158,7 +158,6 @@ with tab1:
             guardar_envio(datos_envio)
 
         st.success(f"Pedido #{pedido_id} guardado correctamente")
-
         pdf_bytes = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
         b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
         st.markdown(f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank">📄 Ver PDF</a>', unsafe_allow_html=True)
