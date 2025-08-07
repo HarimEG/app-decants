@@ -1,4 +1,3 @@
-
 # app_decants_final_completo_sin_duplicados.py — Versión corregida (una sola barra de navegación)
 
 import streamlit as st
@@ -229,7 +228,7 @@ with tab2:
                     guardar_pedidos(pedidos_df)
                     guardar_productos(productos_df)
                     st.success(f"Producto '{row['Producto']}' eliminado del pedido.")
-                    st.experimental_rerun()
+                    st.rerun()
 
             st.markdown("#### ➕ Agregar nuevo producto al pedido")
             col1, col2 = st.columns(2)
@@ -265,7 +264,7 @@ with tab2:
                         guardar_pedidos(pedidos_df)
                         guardar_productos(productos_df)
                         st.success(f"Producto '{nuevo_producto}' agregado al pedido.")
-                        st.experimental_rerun()
+                        st.rerun()
 
             if st.button("Actualizar Estatus del Pedido"):
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
@@ -273,7 +272,7 @@ with tab2:
                 st.success("✅ Estatus actualizado.")
 
 
- #Agregar nuevo producto ===
+ Agregar nuevo producto ===
 with tab3:
     st.subheader("🧪 Agregar nuevo perfume")
     with st.form("form_nuevo_producto"):
