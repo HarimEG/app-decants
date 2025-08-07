@@ -1,6 +1,7 @@
-# app_decants_FINAL_FIX_FILTRADO.py
-# Código completo con los 3 tabs y filtro funcional por cliente
 
+# app.py COMPLETO CON TODOS LOS TABS Y FUNCIONALIDADES
+
+# === IMPORTS ===
 import streamlit as st
 import pandas as pd
 import gspread
@@ -9,17 +10,19 @@ from fpdf import FPDF
 from datetime import datetime
 import base64
 
-# === Autenticación Google Sheets ===
+# === AUTENTICACIÓN GOOGLE SHEETS ===
 scope = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"], scopes=scope)
 client = gspread.authorize(creds)
 
+# === HOJAS GOOGLE SHEETS ===
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1bjV4EaDNNbJfN4huzbNpTFmj-vfCr7A2474jhO81-bE/edit?gid=1318862509#gid=1318862509"
 sheet = client.open_by_url(SHEET_URL)
 productos_ws = sheet.worksheet("Productos")
 pedidos_ws = sheet.worksheet("Pedidos")
 envios_ws = sheet.worksheet("Envios")
 
+# === FUNCIONES BASE ===
 def cargar_productos():
     return pd.DataFrame(productos_ws.get_all_records())
 
@@ -69,18 +72,22 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     pdf.cell(30, 10, f"${total_general:.2f}", 1, 1, 'C', fill=True)
     return pdf.output(dest='S').encode('latin1')
 
-
+# === CONFIG STREAMLIT ===
 st.set_page_config(page_title="App Decants", layout="centered")
 st.image("https://raw.githubusercontent.com/HarimEG/app-decants/main/hdecants_logo.jpg", width=150)
 st.title("H DECANTS Pedidos")
 
+# === DATOS ===
 productos_df = cargar_productos()
 pedidos_df = cargar_pedidos()
 pedido_id = int(pedidos_df["# Pedido"].max()) + 1 if not pedidos_df.empty else 1
 
-tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial de Pedidos", "🧪 Nuevo Producto"])
+# === TABS ===
+tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial de Pedidos", "🧪 Nuevo Perfume"])
 
-# === TAB 1: Nuevo Pedido ===
+
+
+# === TAB 1: NUEVO PEDIDO ===
 with tab1:
     if st.session_state.get("nueva_sesion", False):
         st.session_state.productos = []
