@@ -179,7 +179,7 @@ with tab2:
     else:
         pedidos_filtrados = pedidos_df
 
-    st.dataframe(pedidos_filtrados, use_container_width=True)
+    st.dataframe(pedidos_filtrados.reset_index(drop=True).rename(lambda x: x + 1), use_container_width=True)
 
     if not pedidos_filtrados.empty:
         pedido_ids = pedidos_filtrados["# Pedido"].unique().tolist()
