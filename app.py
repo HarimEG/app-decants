@@ -272,7 +272,7 @@ with tab2:
                 st.success("✅ Estatus actualizado.")
 
 
- Agregar nuevo producto ===
+ #Agregar nuevo producto ===
 with tab3:
     st.subheader("🧪 Agregar nuevo perfume")
     with st.form("form_nuevo_producto"):
