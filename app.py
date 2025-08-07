@@ -182,7 +182,7 @@ with tab2:
     if not pedidos_filtrados.empty:
         pedido_ids = pedidos_filtrados["# Pedido"].unique().tolist()
         pedido_id_sel = st.selectbox("Selecciona un pedido para editar/clonar", pedido_ids)
-        pedido_seleccionado = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]
+        pedido_seleccionado = pedidos_filtrados[pedidos_filtrados["# Pedido"] == pedido_id_sel]
 
         if not pedido_seleccionado.empty:
             st.markdown("### 🔁 Clonar este pedido")
