@@ -164,3 +164,95 @@ with tab1:
         if st.button("🔁 Registrar otro pedido"):
             st.session_state.productos = []
             st.rerun()
+
+
+
+# === TAB 2: Historial de Pedidos ===
+with tab2:
+    st.subheader("📋 Historial de Pedidos por Cliente")
+    nombre_cliente_filtro = st.text_input("🔍 Buscar cliente")
+
+    if nombre_cliente_filtro:
+        pedidos_filtrados = pedidos_df[pedidos_df["Nombre Cliente"].str.contains(nombre_cliente_filtro, case=False, na=False)]
+    else:
+        pedidos_filtrados = pedidos_df
+
+    st.dataframe(pedidos_filtrados, use_container_width=True)
+
+    if not pedidos_filtrados.empty:
+        pedido_ids = pedidos_filtrados["# Pedido"].unique().tolist()
+        pedido_id_sel = st.selectbox("Selecciona un pedido para editar/clonar", pedido_ids)
+        pedido_seleccionado = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]
+
+        if not pedido_seleccionado.empty:
+            st.markdown("### 🔁 Clonar este pedido")
+            if st.button("Clonar Pedido"):
+                productos_originales = pedido_seleccionado[["Producto", "Mililitros", "Costo x ml", "Total"]].values.tolist()
+                nuevo_id = int(pedidos_df["# Pedido"].max()) + 1
+                nueva_fecha = datetime.today().strftime("%Y-%m-%d")
+                cliente = pedido_seleccionado["Nombre Cliente"].iloc[0]
+                estatus = "Cotizacion"
+
+                nuevos_registros = []
+                errores_stock = []
+
+                for p in productos_originales:
+                    producto, ml, costo, total = p
+                    idx = productos_df[productos_df["Producto"] == producto].index
+
+                    if not idx.empty:
+                        idx = idx[0]
+                        if productos_df.at[idx, "Stock disponible"] >= ml:
+                            productos_df.at[idx, "Stock disponible"] -= ml
+                            nuevos_registros.append({
+                                "# Pedido": nuevo_id,
+                                "Nombre Cliente": cliente,
+                                "Fecha": nueva_fecha,
+                                "Producto": producto,
+                                "Mililitros": ml,
+                                "Costo x ml": costo,
+                                "Total": total,
+                                "Estatus": estatus
+                            })
+                        else:
+                            errores_stock.append(producto)
+                    else:
+                        errores_stock.append(producto)
+
+                if nuevos_registros:
+                    pedidos_df = pd.concat([pedidos_df, pd.DataFrame(nuevos_registros)], ignore_index=True)
+                    guardar_pedidos(pedidos_df)
+                    guardar_productos(productos_df)
+                    st.success(f"✅ Pedido #{nuevo_id} clonado exitosamente.")
+
+                    pdf_bytes = generar_pdf(nuevo_id, cliente, nueva_fecha, estatus, productos_originales)
+                    b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+                    st.markdown(f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank">📄 Ver PDF del nuevo pedido</a>', unsafe_allow_html=True)
+                    st.download_button("⬇️ Descargar PDF", pdf_bytes, f"Pedido_{nuevo_id}_{cliente.replace(' ', '')}.pdf", mime="application/pdf")
+
+                if errores_stock:
+                    st.warning("⚠️ Sin stock para: " + ", ".join(errores_stock))
+
+
+
+# === TAB 3: Agregar nuevo producto ===
+with tab3:
+    st.subheader("🧪 Agregar nuevo perfume")
+    with st.form("form_nuevo_producto"):
+        nombre_producto = st.text_input("Nombre del producto")
+        costo_ml = st.number_input("Costo por ml", min_value=0.0, step=0.1)
+        stock_inicial = st.number_input("Stock disponible (ml)", min_value=0, step=1)
+        submit_producto = st.form_submit_button("➕ Agregar")
+
+        if submit_producto:
+            if nombre_producto.strip() == "" or costo_ml <= 0:
+                st.error("Completa todos los campos correctamente.")
+            else:
+                nuevo = pd.DataFrame([{
+                    "Producto": nombre_producto.strip(),
+                    "Costo x ml": costo_ml,
+                    "Stock disponible": stock_inicial
+                }])
+                productos_df = pd.concat([productos_df, nuevo], ignore_index=True)
+                guardar_productos(productos_df)
+                st.success(f"Producto '{nombre_producto}' agregado correctamente.")
