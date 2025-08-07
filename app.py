@@ -1,5 +1,3 @@
-# app_decants_final_completo_sin_duplicados.py — Versión corregida (una sola barra de navegación)
-
 import streamlit as st
 import pandas as pd
 import gspread
@@ -73,7 +71,7 @@ def generar_pdf(pedido_id, cliente, fecha, estatus, productos):
     return pdf.output(dest='S').encode('latin1')
 
 
-# === UI PRINCIPAL ===
+# === Interfaz Streamlit ===
 st.set_page_config(page_title="App Decants", layout="centered")
 st.image("https://raw.githubusercontent.com/HarimEG/app-decants/072576bfb6326d13c6528c7723e8b4f85c2abc65/hdecants_logo.jpg", width=150)
 st.title("H DECANTS Pedidos")
@@ -82,16 +80,19 @@ productos_df = cargar_productos()
 pedidos_df = cargar_pedidos()
 pedido_id = int(pedidos_df["# Pedido"].max()) + 1 if not pedidos_df.empty else 1
 
-# === TABS ===
 tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial de Pedidos", "🧪 Nuevo Producto"])
 
 # === TAB 1 ===
 with tab1:
+    # Reset al iniciar si se marcó una nueva sesión
+    if st.session_state.get("nueva_sesion", False):
+        st.session_state.productos = []
+        st.session_state.nueva_sesion = False
+
     with st.form("formulario"):
         cliente = st.text_input("👤 Nombre del Cliente")
         fecha = st.date_input("📅 Fecha del pedido", value=datetime.today())
         estatus = st.selectbox("📌 Estatus", ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"])
-
         requiere_envio = st.checkbox("¿Requiere envío?")
         datos_envio = []
         if requiere_envio:
@@ -157,139 +158,12 @@ with tab1:
             guardar_envio(datos_envio)
 
         st.success(f"Pedido #{pedido_id} guardado correctamente")
+
         pdf_bytes = generar_pdf(pedido_id, cliente, fecha.strftime("%Y-%m-%d"), estatus, st.session_state.productos)
         b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
         st.markdown(f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank">📄 Ver PDF</a>', unsafe_allow_html=True)
         st.download_button("⬇️ Descargar PDF", pdf_bytes, f"Pedido_{pedido_id}_{cliente.replace(' ', '')}.pdf", mime="application/pdf")
-        if st.button("🔁 Registrar otro pedido"):
-            st.session_state.productos = []
-            st.rerun()
 
-
-
-
-# === TAB 2: Historial editable ===
-with tab2:
-    st.subheader("📋 Historial de Pedidos por Cliente")
-    nombre_cliente_filtro = st.text_input("🔍 Buscar cliente")
-
-    if nombre_cliente_filtro:
-        pedidos_filtrados = pedidos_df[pedidos_df["Nombre Cliente"].str.contains(nombre_cliente_filtro, case=False, na=False)]
-    else:
-        pedidos_filtrados = pedidos_df
-
-    st.dataframe(pedidos_filtrados, use_container_width=True)
-
-    if not pedidos_filtrados.empty:
-        pedido_ids = pedidos_filtrados["# Pedido"].unique().tolist()
-        pedido_id_sel = st.selectbox("Selecciona un pedido para editar/clonar", pedido_ids)
-        pedido_seleccionado = pedidos_df[pedidos_df["# Pedido"] == pedido_id_sel]
-
-        if not pedido_seleccionado.empty:
-            st.markdown("### ✏️ Editar Pedido")
-
-            nuevo_estatus = st.selectbox("Nuevo Estatus", ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"],
-                                          index=["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"].index(
-                                              pedido_seleccionado["Estatus"].iloc[-1]
-                                          ))
-
-            st.markdown("#### Productos del pedido:")
-            productos_pedido = pedido_seleccionado.reset_index()
-
-            for i, row in productos_pedido.iterrows():
-                cols = st.columns([3, 2, 2, 2, 1, 1])
-                cols[0].write(row["Producto"])
-                ml_edit = cols[1].number_input(f"Mililitros (Producto {i})", min_value=0.0, step=0.5,
-                                               value=float(row["Mililitros"]), key=f"ml_{i}")
-                cols[2].write(f"${row['Costo x ml']:.2f}")
-                cols[3].write(f"${row['Total']:.2f}")
-
-                if cols[4].button("✏️", key=f"update_{i}"):
-                    diferencia_ml = ml_edit - row["Mililitros"]
-                    idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
-                    if diferencia_ml > productos_df.at[idx_prod, "Stock disponible"]:
-                        st.error("No hay stock suficiente para aumentar la cantidad.")
-                    else:
-                        productos_df.at[idx_prod, "Stock disponible"] -= diferencia_ml
-                        pedidos_df.at[row["index"], "Mililitros"] = ml_edit
-                        pedidos_df.at[row["index"], "Total"] = ml_edit * row["Costo x ml"]
-                        guardar_pedidos(pedidos_df)
-                        guardar_productos(productos_df)
-                        st.success(f"Cantidad de '{row['Producto']}' actualizada.")
-
-                if cols[5].button("🗑️", key=f"delete_{i}"):
-                    idx_prod = productos_df[productos_df["Producto"] == row["Producto"]].index[0]
-                    productos_df.at[idx_prod, "Stock disponible"] += row["Mililitros"]
-                    pedidos_df = pedidos_df.drop(pedidos_df[
-                        (pedidos_df["# Pedido"] == pedido_id_sel) &
-                        (pedidos_df["Producto"] == row["Producto"]) &
-                        (pedidos_df["Mililitros"] == row["Mililitros"])
-                    ].index)
-                    guardar_pedidos(pedidos_df)
-                    guardar_productos(productos_df)
-                    st.success(f"Producto '{row['Producto']}' eliminado del pedido.")
-                    st.rerun()
-
-            st.markdown("#### ➕ Agregar nuevo producto al pedido")
-            col1, col2 = st.columns(2)
-            with col1:
-                search_term_edit = st.text_input("Buscar producto nuevo", key="search_nuevo")
-                opciones_nuevas = productos_df[productos_df["Producto"].str.contains(search_term_edit, case=False, na=False)]["Producto"].tolist()
-                nuevo_producto = st.selectbox("Producto", opciones_nuevas if opciones_nuevas else ["Ningún resultado"], key="nuevo_producto_sel")
-            with col2:
-                nuevo_ml = st.number_input("Mililitros", min_value=0.0, step=0.5, key="nuevo_ml")
-
-            if st.button("Agregar nuevo producto al pedido"):
-                fila_nueva = productos_df[productos_df["Producto"] == nuevo_producto]
-                if not fila_nueva.empty:
-                    idx = fila_nueva.index[0]
-                    costo = float(fila_nueva["Costo x ml"].values[0])
-                    total = nuevo_ml * costo
-
-                    if nuevo_ml > productos_df.at[idx, "Stock disponible"]:
-                        st.error("No hay stock suficiente para agregar este producto.")
-                    else:
-                        productos_df.at[idx, "Stock disponible"] -= nuevo_ml
-                        nuevo_registro = {
-                            "# Pedido": pedido_id_sel,
-                            "Nombre Cliente": pedido_seleccionado["Nombre Cliente"].iloc[0],
-                            "Fecha": pedido_seleccionado["Fecha"].iloc[0],
-                            "Producto": nuevo_producto,
-                            "Mililitros": nuevo_ml,
-                            "Costo x ml": costo,
-                            "Total": total,
-                            "Estatus": pedido_seleccionado["Estatus"].iloc[-1]
-                        }
-                        pedidos_df = pd.concat([pedidos_df, pd.DataFrame([nuevo_registro])], ignore_index=True)
-                        guardar_pedidos(pedidos_df)
-                        guardar_productos(productos_df)
-                        st.success(f"Producto '{nuevo_producto}' agregado al pedido.")
-                        st.rerun()
-
-            if st.button("Actualizar Estatus del Pedido"):
-                pedidos_df.loc[pedidos_df["# Pedido"] == pedido_id_sel, "Estatus"] = nuevo_estatus
-                guardar_pedidos(pedidos_df)
-                st.success("✅ Estatus actualizado.")
-
-
- #Agregar nuevo producto ===
-with tab3:
-    st.subheader("🧪 Agregar nuevo perfume")
-    with st.form("form_nuevo_producto"):
-        nombre_producto = st.text_input("Nombre del producto")
-        costo_ml = st.number_input("Costo por ml", min_value=0.0, step=0.1)
-        stock_inicial = st.number_input("Stock disponible (ml)", min_value=0, step=1)
-        submit_producto = st.form_submit_button("➕ Agregar")
-
-        if submit_producto:
-            if nombre_producto.strip() == "" or costo_ml <= 0:
-                st.error("Completa todos los campos correctamente.")
-            else:
-                nuevo = pd.DataFrame([{
-                    "Producto": nombre_producto.strip(),
-                    "Costo x ml": costo_ml,
-                    "Stock disponible": stock_inicial
-                }])
-                productos_df = pd.concat([productos_df, nuevo], ignore_index=True)
-                guardar_productos(productos_df)
-                st.success(f"Producto '{nombre_producto}' agregado correctamente.")
+    if st.button("🔁 Registrar otro pedido"):
+        st.session_state["nueva_sesion"] = True
+        st.rerun()
