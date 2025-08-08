@@ -460,7 +460,7 @@ st.caption("v2 — Optimizado para flujo rápido de pedidos, edición segura y C
 ''')
 
 # Write to file
-path = "/mnt/data/app_optimizado_decants.py"
+path = "/mnt/data/app_decants.py"
 with open(path, "w", encoding="utf-8") as f:
     f.write(app_code)
 
