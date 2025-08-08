@@ -1,7 +1,3 @@
-# We'll write an optimized Streamlit app to a file for the user to download.
-from textwrap import dedent
-
-app_code = dedent('''
 # app.py — H DECANTS (optimizado)
 # =================================
 # Puntos clave del refactor:
@@ -13,12 +9,6 @@ app_code = dedent('''
 # - Funciones utilitarias y validaciones
 # - Sin "clear total" agresivo en edición puntual (solo cuando corresponde)
 # - Botones de acciones rápidas (duplicar pedido, PDF, cambiar estatus)
-#
-# Requisitos:
-#   streamlit, pandas, gspread, google-auth, fpdf2 (o fpdf), python-dateutil
-#   st.secrets["GOOGLE_SERVICE_ACCOUNT"] con credenciales válidas
-#
-# ---------------------------------
 
 import streamlit as st
 import pandas as pd
@@ -72,7 +62,6 @@ def load_productos_df() -> pd.DataFrame:
     df = pd.DataFrame(productos_ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
-    # Tipos
     if "Costo x ml" in df:
         df["Costo x ml"] = pd.to_numeric(df["Costo x ml"], errors="coerce").fillna(0.0)
     if "Stock disponible" in df:
@@ -84,7 +73,6 @@ def load_pedidos_df() -> pd.DataFrame:
     df = pd.DataFrame(pedidos_ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
-    # Tipos
     for col in ["# Pedido", "Mililitros"]:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -94,7 +82,6 @@ def load_pedidos_df() -> pd.DataFrame:
     return df
 
 def save_productos_df(df: pd.DataFrame):
-    # Reescribe por simplicidad y consistencia (operación corta)
     productos_ws.clear()
     productos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
     load_productos_df.clear()
@@ -118,7 +105,6 @@ def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
 def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, productos: List[Tuple[str, float, float, float]]) -> bytes:
     pdf = FPDF()
     pdf.add_page()
-    # Encabezado
     try:
         pdf.image("hdecants_logo.jpg", x=160, y=8, w=30)
     except:
@@ -130,7 +116,6 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, producto
     pdf.cell(0, 8, f"Fecha: {fecha}", ln=True)
     pdf.cell(0, 8, f"Estatus: {estatus}", ln=True)
     pdf.ln(6)
-    # Tabla
     pdf.set_font("Arial", "B", 12)
     pdf.cell(80, 9, "Producto", 1)
     pdf.cell(25, 9, "ML", 1, 0, "C")
@@ -145,7 +130,6 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, producto
         pdf.cell(25, 8, f"{ml:g}", 1, 0, "C")
         pdf.cell(35, 8, f"${costo:.2f}", 1, 0, "R")
         pdf.cell(35, 8, f"${total:.2f}", 1, 1, "R")
-    # Total
     pdf.set_font("Arial", "B", 12)
     pdf.cell(140, 9, "TOTAL GENERAL", 1, 0, "R")
     pdf.cell(35, 9, f"${total_general:.2f}", 1, 1, "R")
@@ -173,9 +157,9 @@ pedido_id = next_pedido_id(pedidos_df)
 # =====================
 tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Productos"])
 
-# ===============
-# TAB 1: NUEVO
-# ===============
+# =====================
+# TAB 1: NUEVO PEDIDO
+# =====================
 with tab1:
     if st.session_state.get("nueva_sesion", False):
         st.session_state.pedido_items = []
@@ -199,7 +183,6 @@ with tab1:
         with c2:
             ml = st.number_input("ML", min_value=0.0, step=0.5, value=0.0)
         with c3:
-            # Autocálculo costo y total al agregar
             costo_actual = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Costo x ml"].iloc[0]) if prod_sel in productos_df["Producto"].values else 0.0
             st.number_input("Costo/ml (ref)", value=float(costo_actual), disabled=True)
         with c4:
@@ -207,7 +190,6 @@ with tab1:
             add = st.form_submit_button("➕ Agregar")
 
         if add:
-            # Validaciones
             if not prod_sel or prod_sel == "—":
                 st.warning("Seleccione un producto válido.")
             elif ml <= 0:
@@ -249,7 +231,6 @@ with tab1:
         elif not st.session_state.pedido_items:
             st.error("Agregue al menos un producto.")
         else:
-            # Construye nuevas filas pedido
             nuevas_filas = []
             for prod, ml_val, costo_val, total_val in st.session_state.pedido_items:
                 nuevas_filas.append({
@@ -262,29 +243,24 @@ with tab1:
                     "Total": float(total_val),
                     "Estatus": estatus
                 })
-                # Ajuste stock
                 idx = productos_df.index[productos_df["Producto"]==prod][0]
                 productos_df.at[idx, "Stock disponible"] = float(productos_df.at[idx, "Stock disponible"]) - float(ml_val)
 
-            # Persistencia
             pedidos_df_new = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
             save_pedidos_df(pedidos_df_new)
             save_productos_df(productos_df)
 
-            # Envío
             if requiere_envio and datos_envio:
                 datos_envio[0] = pedido_id
                 datos_envio[1] = cliente.strip()
                 append_envio_row(datos_envio)
 
             st.success(f"Pedido #{pedido_id} guardado.")
-            # PDF
             pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, st.session_state.pedido_items)
             link, b64 = link_pdf(pdf_bytes, f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf")
             st.markdown(link, unsafe_allow_html=True)
             st.download_button("⬇️ Descargar PDF", pdf_bytes, file_name=f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf", mime="application/pdf")
 
-            # Reset
             st.session_state.pedido_items = []
             st.session_state.nueva_sesion = True
             st.rerun()
@@ -327,7 +303,6 @@ with tab2:
             st.markdown(f"### Pedido #{pedido_sel} — {cliente_sel}")
             st.write(f"Estatus actual: **{estatus_actual}**")
 
-            # Editor inline (solo ML editable)
             editable = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].copy()
             editable["Mililitros"] = editable["Mililitros"].astype(float)
             editable["Costo x ml"] = editable["Costo x ml"].astype(float)
@@ -352,7 +327,6 @@ with tab2:
                 dup = st.button("🧬 Duplicar pedido")
 
             if apply_changes:
-                # Ajuste de ML y stock
                 cambios = edited.merge(pedido_rows[["Producto","Mililitros"]], on="Producto", how="left", suffixes=("_new","_old"))
                 modificaciones = []
                 for _, r in cambios.iterrows():
@@ -368,17 +342,14 @@ with tab2:
                         productos_df.at[idxp, "Stock disponible"] = stock_disp - diff
                         modificaciones.append((r["Producto"], ml_new))
 
-                # Aplica cambios en pedidos_df
                 for prod, ml_new in modificaciones:
                     mask = (pedidos_df["# Pedido"] == pedido_sel) & (pedidos_df["Producto"] == prod)
                     pedidos_df.loc[mask, "Mililitros"] = ml_new
                     costo = float(pedidos_df.loc[mask, "Costo x ml"].iloc[0])
                     pedidos_df.loc[mask, "Total"] = float(ml_new) * costo
 
-                # Estatus
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_sel, "Estatus"] = nuevo_estatus
 
-                # Persistencia
                 save_pedidos_df(pedidos_df)
                 save_productos_df(productos_df)
                 st.success("Cambios guardados.")
@@ -392,13 +363,11 @@ with tab2:
                 st.download_button("📥 Descargar PDF", pdf_bytes, file_name=f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf", mime="application/pdf")
 
             if dup:
-                # Crea un nuevo pedido con misma info (fecha = hoy, estatus = Cotizacion)
                 base = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
                 new_id = next_pedido_id(pedidos_df)
                 base["# Pedido"] = new_id
                 base["Fecha"] = datetime.today().strftime("%Y-%m-%d")
                 base["Estatus"] = "Cotizacion"
-                # No toca stock (solo duplicación)
                 pedidos_df2 = pd.concat([pedidos_df, base], ignore_index=True)
                 save_pedidos_df(pedidos_df2)
                 st.success(f"Pedido #{new_id} duplicado.")
@@ -445,7 +414,6 @@ with tab3:
         key="prod_editor"
     )
     if st.button("💾 Guardar cambios de productos"):
-        # Validaciones básicas
         if edited_prod["Costo x ml"].lt(0).any() or edited_prod["Stock disponible"].lt(0).any():
             st.error("Costo y stock deben ser >= 0.")
         else:
@@ -457,11 +425,3 @@ with tab3:
 # FOOTER
 # =====================
 st.caption("v2 — Optimizado para flujo rápido de pedidos, edición segura y CRUD de productos.")
-''')
-
-# Write to file
-path = "/mnt/data/app.py"
-with open(path, "w", encoding="utf-8") as f:
-    f.write(app_code)
-
-path
