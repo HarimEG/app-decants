@@ -5,27 +5,25 @@
 # - UI más ágil para tomar pedidos (búsqueda rápida y flujo guiado)
 # - Editor de pedidos (inline) seguro con ajuste de stock
 # - CRUD de productos (agregar, editar costo/stock)
-# - Generación de IMAGEN (PNG) del pedido (antes PDF)
+# - Generación de IMAGEN (PNG) del pedido
 # - Funciones utilitarias y validaciones
-# - Sin "clear total" agresivo en edición puntual (solo cuando corresponde)
 # - Botones de acciones rápidas (duplicar pedido, Imagen, cambiar estatus)
 
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-# from fpdf import FPDF  # Si dejas de usar PDF por completo, puedes quitarlo
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import base64
 from typing import List, Tuple
 
-# NUEVO: para generar imagen del pedido
+# Imagen del pedido
 from PIL import Image, ImageDraw, ImageFont
 import io
 import requests
 
-# Compatibilidad con distintas versiones de Streamlit para rerun
+# Compatibilidad rerun (versiones nuevas/antiguas)
 RERUN = getattr(st, "rerun", getattr(st, "experimental_rerun", None))
 
 # =====================
@@ -110,43 +108,30 @@ def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
         return 1
     return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
 
-# (Opcional) Si ya no usarás PDF, puedes comentar esta función
-# from fpdf import FPDF
-# def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, productos: List[Tuple[str, float, float, float]]) -> bytes:
-#     pdf = FPDF()
-#     pdf.add_page()
-#     try:
-#         pdf.image("hdecants_logo.jpg", x=160, y=8, w=30)
-#     except:
-#         pass
-#     pdf.set_font("Arial", "B", 14)
-#     pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
-#     pdf.set_font("Arial", size=12)
-#     pdf.cell(0, 8, f"Cliente: {cliente}", ln=True)
-#     pdf.cell(0, 8, f"Fecha: {fecha}", ln=True)
-#     pdf.cell(0, 8, f"Estatus: {estatus}", ln=True)
-#     pdf.ln(6)
-#     pdf.set_font("Arial", "B", 12)
-#     pdf.cell(80, 9, "Producto", 1)
-#     pdf.cell(25, 9, "ML", 1, 0, "C")
-#     pdf.cell(35, 9, "Costo/ml", 1, 0, "C")
-#     pdf.cell(35, 9, "Total", 1, 1, "C")
-#     total_general = 0.0
-#     pdf.set_font("Arial", size=11)
-#     for nombre, ml, costo, total in productos:
-#         total_general += float(total or 0.0)
-#         pdf.cell(80, 8, str(nombre)[:42], 1)
-#         pdf.cell(25, 8, f"{ml:g}", 1, 0, "C")
-#         pdf.cell(35, 8, f"${costo:.2f}", 1, 0, "R")
-#         pdf.cell(35, 8, f"${total:.2f}", 1, 1, "R")
-#     pdf.set_font("Arial", "B", 12)
-#     pdf.cell(140, 9, "TOTAL GENERAL", 1, 0, "R")
-#     pdf.cell(35, 9, f"${total_general:.2f}", 1, 1, "R")
-#     return pdf.output(dest="S").encode("latin1")
+def link_pdf(bytes_pdf: bytes, filename: str) -> str:
+    b64 = base64.b64encode(bytes_pdf).decode("utf-8")
+    return f'<a href="data:application/pdf;base64,{b64}" target="_blank">📄 Ver PDF</a>', b64
 
-# -----------------------
-# Helpers de dibujo (Py 3.9)
-# -----------------------
+# =====================
+# GENERAR IMAGEN DEL PEDIDO (PNG) — estética mejorada
+# =====================
+def _cargar_logo(url_o_path, max_w=220):
+    """Carga logo desde URL o archivo y lo escala a max_w manteniendo proporción."""
+    try:
+        if isinstance(url_o_path, str) and url_o_path.startswith("http"):
+            r = requests.get(url_o_path, timeout=5)
+            r.raise_for_status()
+            img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+        else:
+            img = Image.open(url_o_path).convert("RGBA")
+        w, h = img.size
+        if w > max_w:
+            ratio = float(max_w) / float(w)
+            img = img.resize((max_w, int(h * ratio)))
+        return img
+    except Exception:
+        return None
+
 def _fit_text(draw, text, font, max_width):
     """Recorta con '…' si no cabe en max_width."""
     if not text:
@@ -160,13 +145,12 @@ def _fit_text(draw, text, font, max_width):
     return (text + ell) if text else ell
 
 def _draw_row(draw, x, y, heights, cols):
-    """Dibuja una fila de celdas (solo bordes horizontales)."""
+    """Dibuja una fila de celdas (bordes horizontales) según columnas [(w, text, font, align), ...]."""
     h = heights
     draw.line([(x, y), (x + sum(w for w, *_ in cols), y)], fill="#E6E6E6", width=1)
     cy = y + (h - 18) // 2  # baseline aproximada
     cx = x
     for w, text, font, align in cols:
-        # padding interno
         px = 10
         tx = cx + px
         if align == "right":
@@ -179,18 +163,14 @@ def _draw_row(draw, x, y, heights, cols):
         cx += w
     return y + h
 
-# -----------------------
-# Nueva versión estética
-# -----------------------
-def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
+def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_url=None):
     """
-    Genera PNG con mejor maquetado:
-    - Encabezado con título y logo
+    Genera PNG con maquetado cuidado:
+    - Encabezado con franja, título y logo
     - Tabla con zebra stripes
     - Totales alineados a la derecha
     """
-    # Escala 2x para texto nítido
-    SCALE = 2
+    SCALE = 2  # render 2x para nitidez
     margen = 24 * SCALE
     ancho = 1000 * SCALE
     h_header = 120 * SCALE
@@ -203,7 +183,7 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
     img = Image.new("RGB", (ancho, alto), "white")
     draw = ImageDraw.Draw(img)
 
-    # Fuentes (con fallback)
+    # Fuentes
     try:
         font_title = ImageFont.truetype("arial.ttf", 28 * SCALE)
         font_sub   = ImageFont.truetype("arial.ttf", 18 * SCALE)
@@ -217,10 +197,8 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
         font_cell  = ImageFont.load_default()
         font_bold  = ImageFont.load_default()
 
-    # ---------------- Encabezado ----------------
-    # franja tenue
+    # Encabezado
     draw.rectangle([0, 0, ancho, h_header], fill="#F7F7F7")
-    # Título
     y = margen
     draw.text((margen, y), f"Pedido #{int(pedido_id)}", font=font_title, fill="#111111")
     y += 40 * SCALE
@@ -229,25 +207,27 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
     draw.text((margen, y), f"Estatus: {estatus}", font=font_sub, fill="#333333")
 
     # Logo
-    logo = _cargar_logo("hdecants_logo.jpg", max_w=220 * SCALE) or _cargar_logo(LOGO_URL, max_w=220 * SCALE)
+    if logo_url is None:
+        logo_url = globals().get("LOGO_URL", None)
+    logo = _cargar_logo("hdecants_logo.jpg", max_w=220 * SCALE)
+    if logo is None and logo_url:
+        logo = _cargar_logo(logo_url, max_w=220 * SCALE)
     if logo is not None:
         lw, lh = logo.size
         img.paste(logo, (ancho - margen - lw, margen), logo)
 
-    # Línea separadora
     draw.line([(margen, h_header), (ancho - margen, h_header)], fill="#E0E0E0", width=2)
 
-    # ---------------- Tabla ----------------
+    # Tabla
     y = h_header + 12 * SCALE
     x = margen
-    # Anchos de columnas (suma total = ancho útil)
     ancho_util = (ancho - 2 * margen)
     w_prod  = int(ancho_util * 0.56)
     w_ml    = int(ancho_util * 0.12)
     w_costo = int(ancho_util * 0.16)
     w_total = int(ancho_util * 0.16)
 
-    # Header
+    # Header de tabla
     draw.rectangle([x, y, x + ancho_util, y + h_row], fill="#FAFAFA", outline="#DDDDDD")
     cols = [
         (w_prod,  "Producto", font_head, "left"),
@@ -258,7 +238,7 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
     _draw_row(draw, x, y, h_row, cols)
     y += h_row
 
-    # Filas (zebra)
+    # Filas zebra
     total_general = 0.0
     for i, fila in enumerate(productos or []):
         try:
@@ -266,7 +246,6 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
         except Exception:
             continue
         total_general += float(total or 0.0)
-        # zebra
         if i % 2 == 0:
             draw.rectangle([x, y, x + ancho_util, y + h_row], fill="#FFFFFF")
         else:
@@ -284,7 +263,7 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
         _draw_row(draw, x, y, h_row, cols)
         y += h_row
 
-    # Línea + total
+    # Total
     draw.line([(x, y + 4 * SCALE), (x + ancho_util, y + 4 * SCALE)], fill="#DDDDDD", width=1)
     y += 12 * SCALE
     cols_total = [
@@ -294,30 +273,25 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
     _draw_row(draw, x, y, h_row, cols_total)
     y += h_row
 
-    # ---------------- Pie ----------------
+    # Pie
     y += 14 * SCALE
     draw.text((margen, y), "Gracias por su compra — H DECANTS", font=font_sub, fill="#666666")
 
-    # Exportar 1x (sharpen)
+    # Export (downscale para nitidez)
     final = img.resize((ancho // SCALE, alto // SCALE), Image.LANCZOS)
     buf = io.BytesIO()
     final.save(buf, format="PNG")
     buf.seek(0)
     return buf.getvalue()
 
-def link_pdf(bytes_pdf: bytes, filename: str) -> str:
-    b64 = base64.b64encode(bytes_pdf).decode("utf-8")
-    return f'<a href="data:application/pdf;base64,{b64}" target="_blank">📄 Ver PDF</a>', b64
-
+# =====================
+# ESTADO INICIAL
+# =====================
 def ensure_session_keys():
     st.session_state.setdefault("pedido_items", [])
     st.session_state.setdefault("nueva_sesion", False)
 
 ensure_session_keys()
-
-# =====================
-# DATOS INICIALES
-# =====================
 productos_df = load_productos_df()
 pedidos_df = load_pedidos_df()
 pedido_id = next_pedido_id(pedidos_df)
@@ -428,7 +402,8 @@ with tab1:
             st.success(f"Pedido #{pedido_id} guardado.")
             img_bytes = generar_imagen_pedido(
                 pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"),
-                estatus, st.session_state.pedido_items
+                estatus, st.session_state.pedido_items,
+                logo_url=LOGO_URL
             )
             st.image(img_bytes, caption=f"Pedido #{pedido_id}", use_column_width=True)
             st.download_button(
@@ -537,7 +512,10 @@ with tab2:
                 productos_img = pedidos_df[pedidos_df["# Pedido"] == pedido_sel][["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
                 fecha_img = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Fecha"].iloc[0]
                 estatus_img = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Estatus"].iloc[-1]
-                img_bytes = generar_imagen_pedido(pedido_sel, cliente_sel, fecha_img, estatus_img, productos_img)
+                img_bytes = generar_imagen_pedido(
+                    pedido_sel, cliente_sel, fecha_img, estatus_img, productos_img,
+                    logo_url=LOGO_URL
+                )
                 st.image(img_bytes, caption=f"Pedido #{pedido_sel}", use_column_width=True)
                 st.download_button("📥 Descargar Imagen", img_bytes,
                                    file_name=f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.png",
