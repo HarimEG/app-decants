@@ -20,6 +20,11 @@ from dateutil.relativedelta import relativedelta
 import base64
 from typing import List, Tuple
 
+# NUEVO: para generar imagen del pedido
+from PIL import Image, ImageDraw, ImageFont
+import io
+import requests
+
 # =====================
 # CONFIG Y CONSTANTES
 # =====================
@@ -134,6 +139,108 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, producto
     pdf.cell(140, 9, "TOTAL GENERAL", 1, 0, "R")
     pdf.cell(35, 9, f"${total_general:.2f}", 1, 1, "R")
     return pdf.output(dest="S").encode("latin1")
+
+# =====================
+# GENERAR IMAGEN DEL PEDIDO (PNG)
+# =====================
+def _cargar_logo(url_o_path: str, max_w: int = 180) -> Image.Image | None:
+    """Carga el logo desde URL o path local y lo ajusta de ancho."""
+    try:
+        if url_o_path.startswith("http"):
+            r = requests.get(url_o_path, timeout=5)
+            r.raise_for_status()
+            img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+        else:
+            img = Image.open(url_o_path).convert("RGBA")
+        # Redimensiona respetando proporción
+        w, h = img.size
+        if w > max_w:
+            ratio = max_w / float(w)
+            img = img.resize((max_w, int(h * ratio)))
+        return img
+    except Exception:
+        return None
+
+def generar_imagen_pedido(pedido_id: int, cliente: str, fecha: str, estatus: str,
+                          productos: List[Tuple[str, float, float, float]]) -> bytes:
+    """
+    Genera una imagen PNG con el detalle del pedido.
+    Retorna bytes listos para descargar/mostrar.
+    """
+    # Dimensiones base; creceremos alto si hay muchos renglones
+    margen = 24
+    ancho = 900
+    alto_min = 520
+    renglon_h = 30
+    filas = max(1, len(productos))
+    alto = max(alto_min, 260 + (filas + 2) * renglon_h)
+
+    img = Image.new("RGB", (ancho, alto), "white")
+    draw = ImageDraw.Draw(img)
+
+    # Fuentes (fallback a default si no hay TTF en el entorno)
+    try:
+        font_title = ImageFont.truetype("arial.ttf", 28)
+        font_sub   = ImageFont.truetype("arial.ttf", 18)
+        font_text  = ImageFont.truetype("arial.ttf", 16)
+        font_bold  = ImageFont.truetype("arial.ttf", 20)
+    except:
+        font_title = ImageFont.load_default()
+        font_sub   = ImageFont.load_default()
+        font_text  = ImageFont.load_default()
+        font_bold  = ImageFont.load_default()
+
+    # Logo
+    cursor_y = margen
+    logo = _cargar_logo("hdecants_logo.jpg") or _cargar_logo(LOGO_URL)
+    if logo:
+        img.paste(logo, (ancho - margen - logo.size[0], margen), logo)
+    # Título y datos
+    draw.text((margen, cursor_y), f"Pedido #{pedido_id}", font=font_title, fill="black")
+    cursor_y += 46
+    draw.text((margen, cursor_y), f"Cliente: {cliente}", font=font_sub, fill="black"); cursor_y += 26
+    draw.text((margen, cursor_y), f"Fecha: {fecha}", font=font_sub, fill="black");   cursor_y += 26
+    draw.text((margen, cursor_y), f"Estatus: {estatus}", font=font_sub, fill="black");cursor_y += 32
+
+    # Encabezados de tabla
+    x_prod, x_ml, x_costo, x_total = margen, 540, 650, 770
+    draw.rectangle([margen-6, cursor_y-6, ancho-margen, cursor_y+28], outline="#ddd", width=1)
+    draw.text((x_prod, cursor_y), "Producto", font=font_bold, fill="black")
+    draw.text((x_ml, cursor_y), "ML", font=font_bold, fill="black")
+    draw.text((x_costo, cursor_y), "Costo/ml", font=font_bold, fill="black")
+    draw.text((x_total, cursor_y), "Total", font=font_bold, fill="black")
+    cursor_y += renglon_h
+
+    total_general = 0.0
+    # Filas
+    for nombre, ml, costo, total in productos:
+        total_general += float(total or 0.0)
+        # línea separadora
+        draw.line([(margen-6, cursor_y-6), (ancho-margen, cursor_y-6)], fill="#eee", width=1)
+        # celdas
+        draw.text((x_prod, cursor_y), str(nombre)[:60], font=font_text, fill="black")
+        draw.text((x_ml, cursor_y), f"{ml:g}", font=font_text, fill="black")
+        draw.text((x_costo, cursor_y), f"${costo:.2f}", font=font_text, fill="black")
+        draw.text((x_total, cursor_y), f"${total:.2f}", font=font_text, fill="black")
+        cursor_y += renglon_h
+
+    # Total
+    cursor_y += 10
+    draw.line([(margen-6, cursor_y), (ancho-margen, cursor_y)], fill="#ddd", width=1)
+    cursor_y += 6
+    draw.text((x_costo-80, cursor_y), "TOTAL:", font=font_bold, fill="black")
+    draw.text((x_total, cursor_y), f"${total_general:.2f}", font=font_bold, fill="black")
+
+    # Sello/nota
+    cursor_y += 50
+    draw.text((margen, cursor_y), "Gracias por su compra — H DECANTS", font=font_sub, fill="#444")
+
+    # Exportar a PNG en memoria
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer.getvalue()
+
 
 def link_pdf(bytes_pdf: bytes, filename: str) -> str:
     b64 = base64.b64encode(bytes_pdf).decode("utf-8")
@@ -256,11 +363,17 @@ with tab1:
                 append_envio_row(datos_envio)
 
             st.success(f"Pedido #{pedido_id} guardado.")
-            pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, st.session_state.pedido_items)
-            link, b64 = link_pdf(pdf_bytes, f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf")
-            st.markdown(link, unsafe_allow_html=True)
-            st.download_button("⬇️ Descargar PDF", pdf_bytes, file_name=f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf", mime="application/pdf")
-
+            img_bytes = generar_imagen_pedido(
+                pedido_id,
+                cliente.strip(),
+                fecha.strftime("%Y-%m-%d"),
+                estatus,
+                st.session_state.pedido_items
+            )
+            st.image(img_bytes, caption=f"Pedido #{pedido_id}", use_column_width=True)
+            st.download_button("⬇️ Descargar Imagen", img_bytes,
+                   file_name=f"Pedido_{pedido_id}_{cliente.replace(' ','')}.png",
+                   mime="image/png")
             st.session_state.pedido_items = []
             st.session_state.nueva_sesion = True
             st.rerun()
@@ -322,7 +435,7 @@ with tab2:
             with colb2:
                 apply_changes = st.button("💾 Guardar cambios")
             with colb3:
-                gen_pdf = st.button("📄 Generar PDF")
+                gen_img = st.button("🖼️ Generar Imagen")
             with colb4:
                 dup = st.button("🧬 Duplicar pedido")
 
@@ -355,13 +468,15 @@ with tab2:
                 st.success("Cambios guardados.")
                 st.rerun()
 
-            if gen_pdf:
-                productos_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel][["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
-                fecha_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Fecha"].iloc[0]
-                estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Estatus"].iloc[-1]
-                pdf_bytes = generar_pdf(pedido_sel, cliente_sel, fecha_pdf, estatus_pdf, productos_pdf)
-                st.download_button("📥 Descargar PDF", pdf_bytes, file_name=f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf", mime="application/pdf")
-
+            if gen_img:
+                productos_img = pedidos_df[pedidos_df["# Pedido"] == pedido_sel][["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
+                fecha_img = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Fecha"].iloc[0]
+                estatus_img = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Estatus"].iloc[-1]
+                img_bytes = generar_imagen_pedido(pedido_sel, cliente_sel, fecha_img, estatus_img, productos_img)
+                st.image(img_bytes, caption=f"Pedido #{pedido_sel}", use_column_width=True)
+                st.download_button("📥 Descargar Imagen", img_bytes,
+                                   file_name=f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.png",
+                                   mime="image/png")
             if dup:
                 base = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
                 new_id = next_pedido_id(pedidos_df)
