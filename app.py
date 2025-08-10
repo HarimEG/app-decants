@@ -24,6 +24,9 @@ from typing import List, Tuple
 from PIL import Image, ImageDraw, ImageFont
 import io
 import requests
+from typing import Optional
+
+
 
 # =====================
 # CONFIG Y CONSTANTES
@@ -143,7 +146,7 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, producto
 # =====================
 # GENERAR IMAGEN DEL PEDIDO (PNG)
 # =====================
-def _cargar_logo(url_o_path: str, max_w: int = 180) -> Image.Image | None:
+def _cargar_logo(url_o_path: str, max_w: int = 180) -> Optional[Image.Image]:
     """Carga el logo desde URL o path local y lo ajusta de ancho."""
     try:
         if url_o_path.startswith("http"):
