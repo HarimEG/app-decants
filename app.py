@@ -5,16 +5,16 @@
 # - UI más ágil para tomar pedidos (búsqueda rápida y flujo guiado)
 # - Editor de pedidos (inline) seguro con ajuste de stock
 # - CRUD de productos (agregar, editar costo/stock)
-# - Generación de PDF mejorada
+# - Generación de IMAGEN (PNG) del pedido (antes PDF)
 # - Funciones utilitarias y validaciones
 # - Sin "clear total" agresivo en edición puntual (solo cuando corresponde)
-# - Botones de acciones rápidas (duplicar pedido, PDF, cambiar estatus)
+# - Botones de acciones rápidas (duplicar pedido, Imagen, cambiar estatus)
 
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-from fpdf import FPDF
+# from fpdf import FPDF  # Si dejas de usar PDF por completo, puedes quitarlo
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import base64
@@ -24,9 +24,8 @@ from typing import List, Tuple
 from PIL import Image, ImageDraw, ImageFont
 import io
 import requests
-from typing import Optional
 
-# Compatibilidad con distintas versiones de Streamlit
+# Compatibilidad con distintas versiones de Streamlit para rerun
 RERUN = getattr(st, "rerun", getattr(st, "experimental_rerun", None))
 
 # =====================
@@ -111,38 +110,39 @@ def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
         return 1
     return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
 
-def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, productos: List[Tuple[str, float, float, float]]) -> bytes:
-    pdf = FPDF()
-    pdf.add_page()
-    try:
-        pdf.image("hdecants_logo.jpg", x=160, y=8, w=30)
-    except:
-        pass
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
-    pdf.set_font("Arial", size=12)
-    pdf.cell(0, 8, f"Cliente: {cliente}", ln=True)
-    pdf.cell(0, 8, f"Fecha: {fecha}", ln=True)
-    pdf.cell(0, 8, f"Estatus: {estatus}", ln=True)
-    pdf.ln(6)
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(80, 9, "Producto", 1)
-    pdf.cell(25, 9, "ML", 1, 0, "C")
-    pdf.cell(35, 9, "Costo/ml", 1, 0, "C")
-    pdf.cell(35, 9, "Total", 1, 1, "C")
-
-    total_general = 0.0
-    pdf.set_font("Arial", size=11)
-    for nombre, ml, costo, total in productos:
-        total_general += float(total or 0.0)
-        pdf.cell(80, 8, str(nombre)[:42], 1)
-        pdf.cell(25, 8, f"{ml:g}", 1, 0, "C")
-        pdf.cell(35, 8, f"${costo:.2f}", 1, 0, "R")
-        pdf.cell(35, 8, f"${total:.2f}", 1, 1, "R")
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(140, 9, "TOTAL GENERAL", 1, 0, "R")
-    pdf.cell(35, 9, f"${total_general:.2f}", 1, 1, "R")
-    return pdf.output(dest="S").encode("latin1")
+# (Opcional) Si ya no usarás PDF, puedes comentar esta función
+# from fpdf import FPDF
+# def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, productos: List[Tuple[str, float, float, float]]) -> bytes:
+#     pdf = FPDF()
+#     pdf.add_page()
+#     try:
+#         pdf.image("hdecants_logo.jpg", x=160, y=8, w=30)
+#     except:
+#         pass
+#     pdf.set_font("Arial", "B", 14)
+#     pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
+#     pdf.set_font("Arial", size=12)
+#     pdf.cell(0, 8, f"Cliente: {cliente}", ln=True)
+#     pdf.cell(0, 8, f"Fecha: {fecha}", ln=True)
+#     pdf.cell(0, 8, f"Estatus: {estatus}", ln=True)
+#     pdf.ln(6)
+#     pdf.set_font("Arial", "B", 12)
+#     pdf.cell(80, 9, "Producto", 1)
+#     pdf.cell(25, 9, "ML", 1, 0, "C")
+#     pdf.cell(35, 9, "Costo/ml", 1, 0, "C")
+#     pdf.cell(35, 9, "Total", 1, 1, "C")
+#     total_general = 0.0
+#     pdf.set_font("Arial", size=11)
+#     for nombre, ml, costo, total in productos:
+#         total_general += float(total or 0.0)
+#         pdf.cell(80, 8, str(nombre)[:42], 1)
+#         pdf.cell(25, 8, f"{ml:g}", 1, 0, "C")
+#         pdf.cell(35, 8, f"${costo:.2f}", 1, 0, "R")
+#         pdf.cell(35, 8, f"${total:.2f}", 1, 1, "R")
+#     pdf.set_font("Arial", "B", 12)
+#     pdf.cell(140, 9, "TOTAL GENERAL", 1, 0, "R")
+#     pdf.cell(35, 9, f"${total_general:.2f}", 1, 1, "R")
+#     return pdf.output(dest="S").encode("latin1")
 
 # =====================
 # GENERAR IMAGEN DEL PEDIDO (PNG) — PY 3.9 SAFE
@@ -243,7 +243,6 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
     img.save(buffer, format="PNG")
     buffer.seek(0)
     return buffer.getvalue()
-
 
 def link_pdf(bytes_pdf: bytes, filename: str) -> str:
     b64 = base64.b64encode(bytes_pdf).decode("utf-8")
@@ -368,17 +367,19 @@ with tab1:
             st.success(f"Pedido #{pedido_id} guardado.")
             img_bytes = generar_imagen_pedido(
                 pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"),
-                 estatus, st.session_state.pedido_items
+                estatus, st.session_state.pedido_items
             )
             st.image(img_bytes, caption=f"Pedido #{pedido_id}", use_column_width=True)
             st.download_button(
-                    "⬇️ Descargar Imagen", img_bytes,
-                    file_name=f"Pedido_{pedido_id}_{cliente.replace(' ','')}.png",
-                    mime="image/png"
+                "⬇️ Descargar Imagen", img_bytes,
+                file_name=f"Pedido_{pedido_id}_{cliente.replace(' ','')}.png",
+                mime="image/png"
             )
+
             st.session_state.pedido_items = []
             st.session_state.nueva_sesion = True
-            RERUN()
+            if RERUN:
+                RERUN()
 
 # =====================
 # TAB 2: HISTORIAL
@@ -468,7 +469,8 @@ with tab2:
                 save_pedidos_df(pedidos_df)
                 save_productos_df(productos_df)
                 st.success("Cambios guardados.")
-                RERUN()
+                if RERUN:
+                    RERUN()
 
             if gen_img:
                 productos_img = pedidos_df[pedidos_df["# Pedido"] == pedido_sel][["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
@@ -479,6 +481,7 @@ with tab2:
                 st.download_button("📥 Descargar Imagen", img_bytes,
                                    file_name=f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.png",
                                    mime="image/png")
+
             if dup:
                 base = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
                 new_id = next_pedido_id(pedidos_df)
@@ -488,7 +491,8 @@ with tab2:
                 pedidos_df2 = pd.concat([pedidos_df, base], ignore_index=True)
                 save_pedidos_df(pedidos_df2)
                 st.success(f"Pedido #{new_id} duplicado.")
-                RERUN()
+                if RERUN:
+                    RERUN()
 
 # =====================
 # TAB 3: PRODUCTOS
@@ -520,7 +524,8 @@ with tab3:
                     productos_df2 = pd.concat([productos_df, nuevo], ignore_index=True)
                     save_productos_df(productos_df2)
                     st.success("Producto agregado.")
-                    RERUN()
+                    if RERUN:
+                        RERUN()
 
     st.markdown("### 🗂️ Lista de productos")
     editable_prod = productos_df.copy()
@@ -536,7 +541,8 @@ with tab3:
         else:
             save_productos_df(edited_prod)
             st.success("Cambios guardados.")
-            RERUN()
+            if RERUN:
+                RERUN()
 
 # =====================
 # FOOTER
