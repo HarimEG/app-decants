@@ -1,14 +1,5 @@
 # app.py — H DECANTS (optimizado)
 # =================================
-# Puntos clave del refactor:
-# - Cacheo de hojas y datos (mejor rendimiento)
-# - UI más ágil para tomar pedidos (búsqueda rápida y flujo guiado)
-# - Editor de pedidos (inline) seguro con ajuste de stock
-# - CRUD de productos (agregar, editar costo/stock)
-# - Generación de IMAGEN (PNG) del pedido
-# - Funciones utilitarias y validaciones
-# - Botones de acciones rápidas (duplicar pedido, Imagen, cambiar estatus)
-
 import streamlit as st
 import pandas as pd
 import gspread
@@ -17,8 +8,6 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import base64
 from typing import List, Tuple
-
-# Imagen del pedido
 from PIL import Image, ImageDraw, ImageFont
 import io
 import requests
@@ -113,10 +102,10 @@ def link_pdf(bytes_pdf: bytes, filename: str) -> str:
     return f'<a href="data:application/pdf;base64,{b64}" target="_blank">📄 Ver PDF</a>', b64
 
 # =====================
-# GENERAR IMAGEN DEL PEDIDO (PNG) — estética mejorada
+# IMAGEN DEL PEDIDO (PNG) — vertical, logo acotado y nítido
 # =====================
-def _cargar_logo(url_o_path, max_w=220):
-    """Carga logo desde URL o archivo y lo escala a max_w manteniendo proporción."""
+def _cargar_logo_fit(url_o_path, max_w, max_h):
+    """Carga logo y lo ajusta para no superar max_w x max_h (manteniendo proporción)."""
     try:
         if isinstance(url_o_path, str) and url_o_path.startswith("http"):
             r = requests.get(url_o_path, timeout=5)
@@ -125,57 +114,43 @@ def _cargar_logo(url_o_path, max_w=220):
         else:
             img = Image.open(url_o_path).convert("RGBA")
         w, h = img.size
-        if w > max_w:
-            ratio = float(max_w) / float(w)
-            img = img.resize((max_w, int(h * ratio)))
+        ratio = min(max_w / float(w), max_h / float(h), 1.0)
+        if ratio < 1.0:
+            img = img.resize((int(w * ratio), int(h * ratio)))
         return img
     except Exception:
         return None
 
 def _fit_text(draw, text, font, max_width):
-    """Recorta con '…' si no cabe en max_width."""
     if not text:
         return ""
-    w = draw.textlength(text, font=font)
-    if w <= max_width:
+    if draw.textlength(text, font=font) <= max_width:
         return text
     ell = "…"
-    while text and draw.textlength(text + ell, font=font) > max_width:
-        text = text[:-1]
-    return (text + ell) if text else ell
+    t = text
+    while t and draw.textlength(t + ell, font=font) > max_width:
+        t = t[:-1]
+    return (t + ell) if t else ell
 
-def _draw_row(draw, x, y, heights, cols):
-    """Dibuja una fila de celdas (bordes horizontales) según columnas [(w, text, font, align), ...]."""
-    h = heights
-    draw.line([(x, y), (x + sum(w for w, *_ in cols), y)], fill="#E6E6E6", width=1)
-    cy = y + (h - 18) // 2  # baseline aproximada
-    cx = x
-    for w, text, font, align in cols:
-        px = 10
-        tx = cx + px
-        if align == "right":
-            tw = draw.textlength(text, font=font)
-            tx = cx + w - tw - px
-        elif align == "center":
-            tw = draw.textlength(text, font=font)
-            tx = cx + (w - tw) / 2
-        draw.text((tx, cy), text, font=font, fill="#111111")
-        cx += w
-    return y + h
+def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_url=None, portrait=True):
+    """
+    Genera un PNG legible:
+    - Formato vertical por defecto (ideal WhatsApp).
+    - Logo limitado por ancho y por la mitad del alto del header.
+    - Zebra stripes y totales a la derecha.
+    Ajusta tamaño con: ancho_base y SCALE.
+    """
+    SCALE = 2              # sube a 3 si quieres aún más nitidez (archivo más pesado)
+    ancho_base = 1100      # sube a 1200/1300 si quieres la imagen más grande
+    h_header_base = 210
+    h_row_base = 50
+    h_footer_base = 120
 
-def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_url=None):
-    """
-    Genera PNG con maquetado cuidado:
-    - Encabezado con franja, título y logo
-    - Tabla con zebra stripes
-    - Totales alineados a la derecha
-    """
-    SCALE = 2  # render 2x para nitidez
-    margen = 24 * SCALE
-    ancho = 1000 * SCALE
-    h_header = 120 * SCALE
-    h_row = 40 * SCALE
-    h_footer = 90 * SCALE
+    margen = 28 * SCALE
+    ancho   = ancho_base  * SCALE
+    h_header= h_header_base * SCALE
+    h_row   = h_row_base * SCALE
+    h_footer= h_footer_base * SCALE
 
     filas = max(1, len(productos))
     alto = h_header + (filas + 2) * h_row + h_footer
@@ -185,60 +160,74 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_ur
 
     # Fuentes
     try:
-        font_title = ImageFont.truetype("arial.ttf", 28 * SCALE)
-        font_sub   = ImageFont.truetype("arial.ttf", 18 * SCALE)
-        font_head  = ImageFont.truetype("arial.ttf", 18 * SCALE)
-        font_cell  = ImageFont.truetype("arial.ttf", 16 * SCALE)
-        font_bold  = ImageFont.truetype("arial.ttf", 20 * SCALE)
+        font_title = ImageFont.truetype("arial.ttf", int(36 * SCALE))
+        font_sub   = ImageFont.truetype("arial.ttf", int(22 * SCALE))
+        font_head  = ImageFont.truetype("arial.ttf", int(22 * SCALE))
+        font_cell  = ImageFont.truetype("arial.ttf", int(20 * SCALE))
+        font_bold  = ImageFont.truetype("arial.ttf", int(24 * SCALE))
     except Exception:
-        font_title = ImageFont.load_default()
-        font_sub   = ImageFont.load_default()
-        font_head  = ImageFont.load_default()
-        font_cell  = ImageFont.load_default()
-        font_bold  = ImageFont.load_default()
+        font_title = font_sub = font_head = font_cell = font_bold = ImageFont.load_default()
 
     # Encabezado
-    draw.rectangle([0, 0, ancho, h_header], fill="#F7F7F7")
+    draw.rectangle([0, 0, ancho, h_header], fill="#F4F6F8")
     y = margen
-    draw.text((margen, y), f"Pedido #{int(pedido_id)}", font=font_title, fill="#111111")
-    y += 40 * SCALE
-    draw.text((margen, y), f"Cliente: {cliente}", font=font_sub, fill="#333333"); y += 26 * SCALE
-    draw.text((margen, y), f"Fecha: {fecha}",    font=font_sub, fill="#333333"); y += 26 * SCALE
-    draw.text((margen, y), f"Estatus: {estatus}", font=font_sub, fill="#333333")
+    draw.text((margen, y), f"Pedido #{int(pedido_id)}", font=font_title, fill="#131722")
+    y += int(48 * SCALE)
+    draw.text((margen, y), f"Cliente: {cliente}", font=font_sub, fill="#333");   y += int(30 * SCALE)
+    draw.text((margen, y), f"Fecha: {fecha}",    font=font_sub, fill="#333");   y += int(30 * SCALE)
+    draw.text((margen, y), f"Estatus: {estatus}",font=font_sub, fill="#333")
 
-    # Logo
+    # Logo seguro dentro del header
     if logo_url is None:
         logo_url = globals().get("LOGO_URL", None)
-    logo = _cargar_logo("hdecants_logo.jpg", max_w=220 * SCALE)
+    max_logo_w = int(0.30 * ancho)
+    max_logo_h = int(h_header * 0.5)  # máx 50% del header
+    logo = _cargar_logo_fit("hdecants_logo.jpg", max_logo_w, max_logo_h)
     if logo is None and logo_url:
-        logo = _cargar_logo(logo_url, max_w=220 * SCALE)
+        logo = _cargar_logo_fit(logo_url, max_logo_w, max_logo_h)
     if logo is not None:
         lw, lh = logo.size
-        img.paste(logo, (ancho - margen - lw, margen), logo)
+        pos_x = ancho - margen - lw
+        pos_y = (h_header - lh) // 2
+        img.paste(logo, (pos_x, pos_y), logo)
 
-    draw.line([(margen, h_header), (ancho - margen, h_header)], fill="#E0E0E0", width=2)
+    draw.line([(margen, h_header), (ancho - margen, h_header)], fill="#E0E3E7", width=2)
 
     # Tabla
-    y = h_header + 12 * SCALE
+    y = h_header + int(12 * SCALE)
     x = margen
     ancho_util = (ancho - 2 * margen)
-    w_prod  = int(ancho_util * 0.56)
+    w_prod  = int(ancho_util * 0.58)
     w_ml    = int(ancho_util * 0.12)
-    w_costo = int(ancho_util * 0.16)
+    w_costo = int(ancho_util * 0.14)
     w_total = int(ancho_util * 0.16)
 
-    # Header de tabla
-    draw.rectangle([x, y, x + ancho_util, y + h_row], fill="#FAFAFA", outline="#DDDDDD")
-    cols = [
-        (w_prod,  "Producto", font_head, "left"),
-        (w_ml,    "ML",       font_head, "center"),
-        (w_costo, "Costo/ml", font_head, "right"),
-        (w_total, "Total",    font_head, "right"),
-    ]
-    _draw_row(draw, x, y, h_row, cols)
-    y += h_row
+    # Header tabla
+    draw.rectangle([x, y, x + ancho_util, y + h_row], fill="#FAFBFC", outline="#DDE2E7")
+    def row(cols):
+        nonlocal y
+        draw.line([(x, y), (x + ancho_util, y)], fill="#EEF1F4", width=1)
+        cy = y + (h_row - int(24 * SCALE)) // 2
+        cx = x
+        for w, text, font, align in cols:
+            pad = int(16 * SCALE)
+            t = _fit_text(draw, text, font, w - 2 * pad)
+            if align == "right":
+                tx = cx + w - draw.textlength(t, font=font) - pad
+            elif align == "center":
+                tx = cx + (w - draw.textlength(t, font=font)) / 2
+            else:
+                tx = cx + pad
+            draw.text((tx, cy), t, font=font, fill="#111")
+            cx += w
+        y += h_row
 
-    # Filas zebra
+    row([(w_prod,"Producto",font_head,"left"),
+         (w_ml,"ML",font_head,"center"),
+         (w_costo,"Costo/ml",font_head,"right"),
+         (w_total,"Total",font_head,"right")])
+
+    # Filas (zebra)
     total_general = 0.0
     for i, fila in enumerate(productos or []):
         try:
@@ -246,38 +235,24 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_ur
         except Exception:
             continue
         total_general += float(total or 0.0)
-        if i % 2 == 0:
-            draw.rectangle([x, y, x + ancho_util, y + h_row], fill="#FFFFFF")
-        else:
-            draw.rectangle([x, y, x + ancho_util, y + h_row], fill="#FCFCFC")
-        prod_txt  = _fit_text(draw, str(nombre), font_cell, w_prod - 20 * SCALE)
-        ml_txt    = f"{ml:g}"
-        costo_txt = f"${costo:,.2f}"
-        total_txt = f"${total:,.2f}"
-        cols = [
-            (w_prod,  prod_txt,  font_cell, "left"),
-            (w_ml,    ml_txt,    font_cell, "center"),
-            (w_costo, costo_txt, font_cell, "right"),
-            (w_total, total_txt, font_cell, "right"),
-        ]
-        _draw_row(draw, x, y, h_row, cols)
-        y += h_row
+        fill = "#FFFFFF" if i % 2 == 0 else "#FBFCFD"
+        draw.rectangle([x, y, x + ancho_util, y + h_row], fill=fill)
+        row([(w_prod,  str(nombre),         font_cell, "left"),
+             (w_ml,    f"{ml:g}",            font_cell, "center"),
+             (w_costo, f"${costo:,.2f}",     font_cell, "right"),
+             (w_total, f"${total:,.2f}",     font_cell, "right")])
 
     # Total
-    draw.line([(x, y + 4 * SCALE), (x + ancho_util, y + 4 * SCALE)], fill="#DDDDDD", width=1)
-    y += 12 * SCALE
-    cols_total = [
-        (w_prod + w_ml + w_costo, "TOTAL:", font_bold, "right"),
-        (w_total,                 f"${total_general:,.2f}", font_bold, "right"),
-    ]
-    _draw_row(draw, x, y, h_row, cols_total)
-    y += h_row
+    draw.line([(x, y + int(8 * SCALE)), (x + ancho_util, y + int(8 * SCALE))], fill="#DADFE4", width=1)
+    y += int(18 * SCALE)
+    row([(w_prod + w_ml + w_costo, "TOTAL:", font_bold, "right"),
+         (w_total, f"${total_general:,.2f}", font_bold, "right")])
 
     # Pie
-    y += 14 * SCALE
-    draw.text((margen, y), "Gracias por su compra — H DECANTS", font=font_sub, fill="#666666")
+    y += int(20 * SCALE)
+    draw.text((margen, y), "Gracias por su compra — H DECANTS", font=font_sub, fill="#67717E")
 
-    # Export (downscale para nitidez)
+    # Exportar (downscale para nitidez)
     final = img.resize((ancho // SCALE, alto // SCALE), Image.LANCZOS)
     buf = io.BytesIO()
     final.save(buf, format="PNG")
