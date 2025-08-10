@@ -144,10 +144,10 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str, producto
     return pdf.output(dest="S").encode("latin1")
 
 # =====================
-# GENERAR IMAGEN DEL PEDIDO (PNG) — COMPATIBLE PYTHON 3.9
+# GENERAR IMAGEN DEL PEDIDO (PNG) — PY 3.9 SAFE
 # =====================
-def _cargar_logo(url_o_path: str, max_w: int = 180) -> Optional[Image.Image]:
-    """Carga el logo desde URL o path local y lo ajusta de ancho."""
+def _cargar_logo(url_o_path, max_w=180):
+    """Carga el logo desde URL o path local y lo ajusta de ancho. Devuelve Image o None."""
     try:
         if isinstance(url_o_path, str) and url_o_path.startswith("http"):
             r = requests.get(url_o_path, timeout=5)
@@ -155,7 +155,6 @@ def _cargar_logo(url_o_path: str, max_w: int = 180) -> Optional[Image.Image]:
             img = Image.open(io.BytesIO(r.content)).convert("RGBA")
         else:
             img = Image.open(url_o_path).convert("RGBA")
-        # Redimensiona respetando proporción
         w, h = img.size
         if w > max_w:
             ratio = float(max_w) / float(w)
@@ -164,10 +163,10 @@ def _cargar_logo(url_o_path: str, max_w: int = 180) -> Optional[Image.Image]:
     except Exception:
         return None
 
-def generar_imagen_pedido(pedido_id: int, cliente: str, fecha: str, estatus: str,
-                          productos: List[Tuple[str, float, float, float]]) -> bytes:
+def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos):
     """
-    Genera una imagen PNG con el detalle del pedido y la devuelve como bytes.
+    Genera una imagen PNG (bytes) con el detalle del pedido.
+    productos: lista de tuplas (nombre, ml, costo_ml, total)
     """
     margen = 24
     ancho = 900
@@ -179,7 +178,7 @@ def generar_imagen_pedido(pedido_id: int, cliente: str, fecha: str, estatus: str
     img = Image.new("RGB", (ancho, alto), "white")
     draw = ImageDraw.Draw(img)
 
-    # Fuentes (fallback a default si no hay TTF disponible)
+    # Fuentes
     try:
         font_title = ImageFont.truetype("arial.ttf", 28)
         font_sub   = ImageFont.truetype("arial.ttf", 18)
@@ -215,15 +214,14 @@ def generar_imagen_pedido(pedido_id: int, cliente: str, fecha: str, estatus: str
 
     total_general = 0.0
     for fila in productos:
-        # tolerante a tuplas incompletas
         try:
             nombre, ml, costo, total = fila
         except Exception:
             continue
         total_general += float(total or 0.0)
         draw.line([(margen-6, cursor_y-6), (ancho-margen, cursor_y-6)], fill="#eeeeee", width=1)
-        draw.text((x_prod,   cursor_y), str(nombre)[:60],      font=font_text, fill="black")
-        draw.text((x_ml,     cursor_y), "{:g}".format(ml),     font=font_text, fill="black")
+        draw.text((x_prod,   cursor_y), str(nombre)[:60],        font=font_text, fill="black")
+        draw.text((x_ml,     cursor_y), "{:g}".format(ml),       font=font_text, fill="black")
         draw.text((x_costo,  cursor_y), "${:.2f}".format(costo), font=font_text, fill="black")
         draw.text((x_total,  cursor_y), "${:.2f}".format(total), font=font_text, fill="black")
         cursor_y += renglon_h
