@@ -26,7 +26,8 @@ import io
 import requests
 from typing import Optional
 
-
+# Compatibilidad con distintas versiones de Streamlit
+RERUN = getattr(st, "rerun", getattr(st, "experimental_rerun", None))
 
 # =====================
 # CONFIG Y CONSTANTES
@@ -377,7 +378,7 @@ with tab1:
             )
             st.session_state.pedido_items = []
             st.session_state.nueva_sesion = True
-            st.rerun()
+            RERUN()
 
 # =====================
 # TAB 2: HISTORIAL
@@ -467,7 +468,7 @@ with tab2:
                 save_pedidos_df(pedidos_df)
                 save_productos_df(productos_df)
                 st.success("Cambios guardados.")
-                st.rerun()
+                RERUN()
 
             if gen_img:
                 productos_img = pedidos_df[pedidos_df["# Pedido"] == pedido_sel][["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
@@ -487,7 +488,7 @@ with tab2:
                 pedidos_df2 = pd.concat([pedidos_df, base], ignore_index=True)
                 save_pedidos_df(pedidos_df2)
                 st.success(f"Pedido #{new_id} duplicado.")
-                st.rerun()
+                RERUN()
 
 # =====================
 # TAB 3: PRODUCTOS
@@ -519,7 +520,7 @@ with tab3:
                     productos_df2 = pd.concat([productos_df, nuevo], ignore_index=True)
                     save_productos_df(productos_df2)
                     st.success("Producto agregado.")
-                    st.rerun()
+                    RERUN()
 
     st.markdown("### 🗂️ Lista de productos")
     editable_prod = productos_df.copy()
@@ -535,7 +536,7 @@ with tab3:
         else:
             save_productos_df(edited_prod)
             st.success("Cambios guardados.")
-            st.rerun()
+            RERUN()
 
 # =====================
 # FOOTER
