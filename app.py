@@ -132,25 +132,27 @@ def _fit_text(draw, text, font, max_width):
         t = t[:-1]
     return (t + ell) if t else ell
 
-def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_url=None, portrait=True):
+def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_url=None, portrait=False):
     """
-    Genera un PNG legible:
-    - Formato vertical por defecto (ideal WhatsApp).
-    - Logo limitado por ancho y por la mitad del alto del header.
-    - Zebra stripes y totales a la derecha.
-    Ajusta tamaño con: ancho_base y SCALE.
+    Genera un PNG horizontal, legible y nítido para compartir.
+    - Ancho grande (1500 px base) y escala 2x para buena nitidez.
+    - Fuentes más grandes para encabezado y tabla.
+    - Logo limitado por ancho y alto del header (no invade la tabla).
+    - Usa helpers: _cargar_logo_fit y _fit_text.
     """
-    SCALE = 2              # sube a 3 si quieres aún más nitidez (archivo más pesado)
-    ancho_base = 1100      # sube a 1200/1300 si quieres la imagen más grande
-    h_header_base = 210
-    h_row_base = 50
-    h_footer_base = 120
+    # ===== Tunables =====
+    SCALE = 2               # 2 = nítido; 3 = súper nítido (archivo más pesado)
+    ancho_base = 1500       # ancho final ~1500 px (sube/baja a gusto)
+    h_header_base = 220     # alto del encabezado
+    h_row_base = 56         # alto de cada fila de tabla
+    h_footer_base = 130     # alto del pie de página
+    # ====================
 
-    margen = 28 * SCALE
-    ancho   = ancho_base  * SCALE
-    h_header= h_header_base * SCALE
-    h_row   = h_row_base * SCALE
-    h_footer= h_footer_base * SCALE
+    margen = int(28 * SCALE)
+    ancho   = int(ancho_base  * SCALE)
+    h_header= int(h_header_base * SCALE)
+    h_row   = int(h_row_base * SCALE)
+    h_footer= int(h_footer_base * SCALE)
 
     filas = max(1, len(productos))
     alto = h_header + (filas + 2) * h_row + h_footer
@@ -158,30 +160,34 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_ur
     img = Image.new("RGB", (ancho, alto), "white")
     draw = ImageDraw.Draw(img)
 
-    # Fuentes
+    # Fuentes más grandes
     try:
-        font_title = ImageFont.truetype("arial.ttf", int(36 * SCALE))
-        font_sub   = ImageFont.truetype("arial.ttf", int(22 * SCALE))
-        font_head  = ImageFont.truetype("arial.ttf", int(22 * SCALE))
-        font_cell  = ImageFont.truetype("arial.ttf", int(20 * SCALE))
-        font_bold  = ImageFont.truetype("arial.ttf", int(24 * SCALE))
+        font_title = ImageFont.truetype("arial.ttf", int(42 * SCALE))
+        font_sub   = ImageFont.truetype("arial.ttf", int(26 * SCALE))
+        font_head  = ImageFont.truetype("arial.ttf", int(26 * SCALE))
+        font_cell  = ImageFont.truetype("arial.ttf", int(24 * SCALE))
+        font_bold  = ImageFont.truetype("arial.ttf", int(28 * SCALE))
     except Exception:
         font_title = font_sub = font_head = font_cell = font_bold = ImageFont.load_default()
 
-    # Encabezado
+    # ===== Encabezado (horizontal) =====
     draw.rectangle([0, 0, ancho, h_header], fill="#F4F6F8")
-    y = margen
-    draw.text((margen, y), f"Pedido #{int(pedido_id)}", font=font_title, fill="#131722")
-    y += int(48 * SCALE)
-    draw.text((margen, y), f"Cliente: {cliente}", font=font_sub, fill="#333");   y += int(30 * SCALE)
-    draw.text((margen, y), f"Fecha: {fecha}",    font=font_sub, fill="#333");   y += int(30 * SCALE)
-    draw.text((margen, y), f"Estatus: {estatus}",font=font_sub, fill="#333")
 
-    # Logo seguro dentro del header
+    # Área izquierda: textos
+    col_left_x = margen
+    col_left_w = int(ancho * 0.62)  # 62% para texto
+    y = margen
+    draw.text((col_left_x, y), f"Pedido #{int(pedido_id)}", font=font_title, fill="#131722")
+    y += int(56 * SCALE)
+    draw.text((col_left_x, y), f"Cliente: {cliente}", font=font_sub, fill="#333");   y += int(32 * SCALE)
+    draw.text((col_left_x, y), f"Fecha: {fecha}",    font=font_sub, fill="#333");   y += int(32 * SCALE)
+    draw.text((col_left_x, y), f"Estatus: {estatus}",font=font_sub, fill="#333")
+
+    # Área derecha: logo (limitado)
     if logo_url is None:
         logo_url = globals().get("LOGO_URL", None)
-    max_logo_w = int(0.30 * ancho)
-    max_logo_h = int(h_header * 0.5)  # máx 50% del header
+    max_logo_w = int(ancho * 0.22)          # máx 22% del ancho total
+    max_logo_h = int(h_header * 0.80)       # máx 80% del header
     logo = _cargar_logo_fit("hdecants_logo.jpg", max_logo_w, max_logo_h)
     if logo is None and logo_url:
         logo = _cargar_logo_fit(logo_url, max_logo_w, max_logo_h)
@@ -191,27 +197,29 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_ur
         pos_y = (h_header - lh) // 2
         img.paste(logo, (pos_x, pos_y), logo)
 
-    draw.line([(margen, h_header), (ancho - margen, h_header)], fill="#E0E3E7", width=2)
+    # Línea separadora
+    draw.line([(margen, h_header), (ancho - margen, h_header)], fill="#DDE2E7", width=2)
 
-    # Tabla
-    y = h_header + int(12 * SCALE)
+    # ===== Tabla =====
+    y = h_header + int(14 * SCALE)
     x = margen
     ancho_util = (ancho - 2 * margen)
-    w_prod  = int(ancho_util * 0.58)
-    w_ml    = int(ancho_util * 0.12)
-    w_costo = int(ancho_util * 0.14)
-    w_total = int(ancho_util * 0.16)
+    # Reparto de columnas más ancho
+    w_prod  = int(ancho_util * 0.56)
+    w_ml    = int(ancho_util * 0.10)
+    w_costo = int(ancho_util * 0.16)
+    w_total = int(ancho_util * 0.18)
 
-    # Header tabla
+    # Header de la tabla
     draw.rectangle([x, y, x + ancho_util, y + h_row], fill="#FAFBFC", outline="#DDE2E7")
     def row(cols):
         nonlocal y
         draw.line([(x, y), (x + ancho_util, y)], fill="#EEF1F4", width=1)
-        cy = y + (h_row - int(24 * SCALE)) // 2
+        cy = y + (h_row - int(26 * SCALE)) // 2
         cx = x
         for w, text, font, align in cols:
-            pad = int(16 * SCALE)
-            t = _fit_text(draw, text, font, w - 2 * pad)
+            pad = int(18 * SCALE)
+            t = _fit_text(draw, str(text), font, w - 2 * pad)
             if align == "right":
                 tx = cx + w - draw.textlength(t, font=font) - pad
             elif align == "center":
@@ -237,22 +245,22 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_ur
         total_general += float(total or 0.0)
         fill = "#FFFFFF" if i % 2 == 0 else "#FBFCFD"
         draw.rectangle([x, y, x + ancho_util, y + h_row], fill=fill)
-        row([(w_prod,  str(nombre),         font_cell, "left"),
-             (w_ml,    f"{ml:g}",            font_cell, "center"),
-             (w_costo, f"${costo:,.2f}",     font_cell, "right"),
-             (w_total, f"${total:,.2f}",     font_cell, "right")])
+        row([(w_prod,  nombre,            font_cell, "left"),
+             (w_ml,    f"{ml:g}",          font_cell, "center"),
+             (w_costo, f"${costo:,.2f}",   font_cell, "right"),
+             (w_total, f"${total:,.2f}",   font_cell, "right")])
 
     # Total
-    draw.line([(x, y + int(8 * SCALE)), (x + ancho_util, y + int(8 * SCALE))], fill="#DADFE4", width=1)
-    y += int(18 * SCALE)
+    draw.line([(x, y + int(10 * SCALE)), (x + ancho_util, y + int(10 * SCALE))], fill="#DADFE4", width=1)
+    y += int(20 * SCALE)
     row([(w_prod + w_ml + w_costo, "TOTAL:", font_bold, "right"),
          (w_total, f"${total_general:,.2f}", font_bold, "right")])
 
     # Pie
-    y += int(20 * SCALE)
+    y += int(24 * SCALE)
     draw.text((margen, y), "Gracias por su compra — H DECANTS", font=font_sub, fill="#67717E")
 
-    # Exportar (downscale para nitidez)
+    # Exportar: downscale para nitidez
     final = img.resize((ancho // SCALE, alto // SCALE), Image.LANCZOS)
     buf = io.BytesIO()
     final.save(buf, format="PNG")
