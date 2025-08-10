@@ -134,21 +134,21 @@ def _fit_text(draw, text, font, max_width):
 
 def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_url=None, portrait=False):
     """
-    Genera un PNG horizontal, legible y nítido para compartir.
-    - Ancho grande (1500 px base) y escala 2x para buena nitidez.
-    - Fuentes más grandes para encabezado y tabla.
-    - Logo limitado por ancho y alto del header (no invade la tabla).
-    - Usa helpers: _cargar_logo_fit y _fit_text.
+    PNG HORIZONTAL con texto grande y TOTAL destacado.
+    - Ancho final ~1800 px (ideal para WhatsApp y lectura).
+    - Fuentes grandes para filas, encabezados y total.
+    - Logo acotado (no invade la tabla).
+    Requiere helpers: _cargar_logo_fit y _fit_text.
     """
-    # ===== Tunables =====
-    SCALE = 2               # 2 = nítido; 3 = súper nítido (archivo más pesado)
-    ancho_base = 1500       # ancho final ~1500 px (sube/baja a gusto)
-    h_header_base = 220     # alto del encabezado
-    h_row_base = 56         # alto de cada fila de tabla
-    h_footer_base = 130     # alto del pie de página
-    # ====================
+    # Tamaño / nitidez
+    SCALE = 2                 # 2 = nítido; 3 = súper nítido (archivo más pesado)
+    ancho_base = 1800         # más ancho => texto más grande al compartir
+    h_header_base = 260       # header más alto
+    h_row_base = 78           # filas altas
+    h_footer_base = 160
 
-    margen = int(28 * SCALE)
+    # Espaciado
+    margen = int(34 * SCALE)
     ancho   = int(ancho_base  * SCALE)
     h_header= int(h_header_base * SCALE)
     h_row   = int(h_row_base * SCALE)
@@ -160,82 +160,81 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_ur
     img = Image.new("RGB", (ancho, alto), "white")
     draw = ImageDraw.Draw(img)
 
-    # Fuentes más grandes
+    # Fuentes GRANDES
     try:
-        font_title = ImageFont.truetype("arial.ttf", int(42 * SCALE))
-        font_sub   = ImageFont.truetype("arial.ttf", int(26 * SCALE))
-        font_head  = ImageFont.truetype("arial.ttf", int(26 * SCALE))
-        font_cell  = ImageFont.truetype("arial.ttf", int(24 * SCALE))
-        font_bold  = ImageFont.truetype("arial.ttf", int(28 * SCALE))
+        font_title = ImageFont.truetype("arial.ttf", int(56 * SCALE))
+        font_sub   = ImageFont.truetype("arial.ttf", int(34 * SCALE))
+        font_head  = ImageFont.truetype("arial.ttf", int(32 * SCALE))
+        font_cell  = ImageFont.truetype("arial.ttf", int(30 * SCALE))
+        font_bold  = ImageFont.truetype("arial.ttf", int(38 * SCALE))  # para TOTAL
     except Exception:
         font_title = font_sub = font_head = font_cell = font_bold = ImageFont.load_default()
 
-    # ===== Encabezado (horizontal) =====
+    # ===== Encabezado =====
     draw.rectangle([0, 0, ancho, h_header], fill="#F4F6F8")
 
-    # Área izquierda: textos
-    col_left_x = margen
-    col_left_w = int(ancho * 0.62)  # 62% para texto
+    # Textos izquierda
     y = margen
-    draw.text((col_left_x, y), f"Pedido #{int(pedido_id)}", font=font_title, fill="#131722")
-    y += int(56 * SCALE)
-    draw.text((col_left_x, y), f"Cliente: {cliente}", font=font_sub, fill="#333");   y += int(32 * SCALE)
-    draw.text((col_left_x, y), f"Fecha: {fecha}",    font=font_sub, fill="#333");   y += int(32 * SCALE)
-    draw.text((col_left_x, y), f"Estatus: {estatus}",font=font_sub, fill="#333")
+    draw.text((margen, y), f"Pedido #{int(pedido_id)}", font=font_title, fill="#131722")
+    y += int(68 * SCALE)
+    draw.text((margen, y), f"Cliente: {cliente}", font=font_sub, fill="#333");   y += int(38 * SCALE)
+    draw.text((margen, y), f"Fecha:   {fecha}",   font=font_sub, fill="#333");   y += int(38 * SCALE)
+    draw.text((margen, y), f"Estatus: {estatus}", font=font_sub, fill="#333")
 
-    # Área derecha: logo (limitado)
+    # Logo derecha (limitado)
     if logo_url is None:
         logo_url = globals().get("LOGO_URL", None)
-    max_logo_w = int(ancho * 0.22)          # máx 22% del ancho total
-    max_logo_h = int(h_header * 0.80)       # máx 80% del header
+    max_logo_w = int(ancho * 0.22)
+    max_logo_h = int(h_header * 0.80)
     logo = _cargar_logo_fit("hdecants_logo.jpg", max_logo_w, max_logo_h)
     if logo is None and logo_url:
         logo = _cargar_logo_fit(logo_url, max_logo_w, max_logo_h)
     if logo is not None:
         lw, lh = logo.size
-        pos_x = ancho - margen - lw
-        pos_y = (h_header - lh) // 2
-        img.paste(logo, (pos_x, pos_y), logo)
+        img.paste(logo, (ancho - margen - lw, (h_header - lh) // 2), logo)
 
-    # Línea separadora
-    draw.line([(margen, h_header), (ancho - margen, h_header)], fill="#DDE2E7", width=2)
+    draw.line([(margen, h_header), (ancho - margen, h_header)], fill="#DDE2E7", width=3)
 
     # ===== Tabla =====
-    y = h_header + int(14 * SCALE)
+    y = h_header + int(18 * SCALE)
     x = margen
     ancho_util = (ancho - 2 * margen)
-    # Reparto de columnas más ancho
-    w_prod  = int(ancho_util * 0.56)
-    w_ml    = int(ancho_util * 0.10)
-    w_costo = int(ancho_util * 0.16)
-    w_total = int(ancho_util * 0.18)
 
-    # Header de la tabla
-    draw.rectangle([x, y, x + ancho_util, y + h_row], fill="#FAFBFC", outline="#DDE2E7")
-    def row(cols):
-        nonlocal y
-        draw.line([(x, y), (x + ancho_util, y)], fill="#EEF1F4", width=1)
-        cy = y + (h_row - int(26 * SCALE)) // 2
+    # Columnas: más espacio a Costo y Total para que se vean
+    w_prod  = int(ancho_util * 0.50)
+    w_ml    = int(ancho_util * 0.10)
+    w_costo = int(ancho_util * 0.18)
+    w_total = int(ancho_util * 0.22)
+
+    def row_bg(y0, color):
+        draw.rectangle([x, y0, x + ancho_util, y0 + h_row], fill=color)
+
+    def row_text(cols, y0):
         cx = x
-        for w, text, font, align in cols:
-            pad = int(18 * SCALE)
-            t = _fit_text(draw, str(text), font, w - 2 * pad)
+        pad_x = int(22 * SCALE)
+        baseline = y0 + (h_row - int(30 * SCALE)) // 2
+        for w, text, font, align, color in cols:
+            t = _fit_text(draw, str(text), font, w - 2 * pad_x)
             if align == "right":
-                tx = cx + w - draw.textlength(t, font=font) - pad
+                tx = cx + w - draw.textlength(t, font=font) - pad_x
             elif align == "center":
                 tx = cx + (w - draw.textlength(t, font=font)) / 2
             else:
-                tx = cx + pad
-            draw.text((tx, cy), t, font=font, fill="#111")
+                tx = cx + pad_x
+            draw.text((tx, baseline), t, font=font, fill=color)
             cx += w
-        y += h_row
 
-    row([(w_prod,"Producto",font_head,"left"),
-         (w_ml,"ML",font_head,"center"),
-         (w_costo,"Costo/ml",font_head,"right"),
-         (w_total,"Total",font_head,"right")])
+    # Header tabla
+    row_bg(y, "#FAFBFC")
+    row_text([
+        (w_prod,  "Producto", font_head, "left",   "#111"),
+        (w_ml,    "ML",       font_head, "center", "#111"),
+        (w_costo, "Costo/ml", font_head, "right",  "#111"),
+        (w_total, "Total",    font_head, "right",  "#111"),
+    ], y)
+    y += h_row
 
-    # Filas (zebra)
+    # Filas
     total_general = 0.0
     for i, fila in enumerate(productos or []):
         try:
@@ -243,162 +242,36 @@ def generar_imagen_pedido(pedido_id, cliente, fecha, estatus, productos, logo_ur
         except Exception:
             continue
         total_general += float(total or 0.0)
-        fill = "#FFFFFF" if i % 2 == 0 else "#FBFCFD"
-        draw.rectangle([x, y, x + ancho_util, y + h_row], fill=fill)
-        row([(w_prod,  nombre,            font_cell, "left"),
-             (w_ml,    f"{ml:g}",          font_cell, "center"),
-             (w_costo, f"${costo:,.2f}",   font_cell, "right"),
-             (w_total, f"${total:,.2f}",   font_cell, "right")])
+        row_bg(y, "#FFFFFF" if i % 2 == 0 else "#F7F9FC")
+        row_text([
+            (w_prod,  nombre,           font_cell, "left",   "#0F172A"),
+            (w_ml,    f"{ml:g}",         font_cell, "center", "#0F172A"),
+            (w_costo, f"${costo:,.2f}",  font_cell, "right",  "#0F172A"),
+            (w_total, f"${total:,.2f}",  font_cell, "right",  "#0F172A"),
+        ], y)
+        y += h_row
 
-    # Total
-    draw.line([(x, y + int(10 * SCALE)), (x + ancho_util, y + int(10 * SCALE))], fill="#DADFE4", width=1)
-    y += int(20 * SCALE)
-    row([(w_prod + w_ml + w_costo, "TOTAL:", font_bold, "right"),
-         (w_total, f"${total_general:,.2f}", font_bold, "right")])
+    # TOTAL destacado
+    y += int(10 * SCALE)
+    draw.line([(x, y), (x + ancho_util, y)], fill="#DADFE4", width=2)
+    y += int(14 * SCALE)
+    row_bg(y, "#FFF6E5")  # banda suave
+    row_text([
+        (w_prod + w_ml + w_costo, "TOTAL", font_bold, "right", "#7A3E00"),
+        (w_total, f"${total_general:,.2f}", font_bold, "right", "#7A3E00"),
+    ], y)
+    y += h_row
 
     # Pie
     y += int(24 * SCALE)
-    draw.text((margen, y), "Gracias por su compra — H DECANTS", font=font_sub, fill="#67717E")
+    draw.text((margen, y), "Gracias por su compra — H DECANTS", font=font_sub, fill="#667085")
 
-    # Exportar: downscale para nitidez
+    # Exportar nítido (downscale)
     final = img.resize((ancho // SCALE, alto // SCALE), Image.LANCZOS)
     buf = io.BytesIO()
     final.save(buf, format="PNG")
     buf.seek(0)
     return buf.getvalue()
-
-# =====================
-# ESTADO INICIAL
-# =====================
-def ensure_session_keys():
-    st.session_state.setdefault("pedido_items", [])
-    st.session_state.setdefault("nueva_sesion", False)
-
-ensure_session_keys()
-productos_df = load_productos_df()
-pedidos_df = load_pedidos_df()
-pedido_id = next_pedido_id(pedidos_df)
-
-# =====================
-# TABS
-# =====================
-tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Productos"])
-
-# =====================
-# TAB 1: NUEVO PEDIDO
-# =====================
-with tab1:
-    if st.session_state.get("nueva_sesion", False):
-        st.session_state.pedido_items = []
-        st.session_state.nueva_sesion = False
-
-    with st.form("form_pedido", clear_on_submit=False):
-        col_a, col_b, col_c = st.columns([3,1.5,1.5])
-        with col_a:
-            cliente = st.text_input("👤 Cliente", placeholder="Nombre y apellidos")
-        with col_b:
-            fecha = st.date_input("📅 Fecha", value=datetime.today().date())
-        with col_c:
-            estatus = st.selectbox("📌 Estatus", ESTATUS_LIST, index=0)
-
-        st.markdown("### 🧴 Productos")
-        c1, c2, c3, c4 = st.columns([3,1.2,1.2,0.8])
-        with c1:
-            search = st.text_input("Buscar producto", placeholder="Escribe parte del nombre")
-            opciones = productos_df[productos_df["Producto"].str.contains(search, case=False, na=False)] if search else productos_df
-            prod_sel = st.selectbox("Producto", opciones["Producto"].tolist() or ["—"], index=0)
-        with c2:
-            ml = st.number_input("ML", min_value=0.0, step=0.5, value=0.0)
-        with c3:
-            costo_actual = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Costo x ml"].iloc[0]) if prod_sel in productos_df["Producto"].values else 0.0
-            st.number_input("Costo/ml (ref)", value=float(costo_actual), disabled=True)
-        with c4:
-            st.write("")
-            add = st.form_submit_button("➕ Agregar")
-
-        if add:
-            if not prod_sel or prod_sel == "—":
-                st.warning("Seleccione un producto válido.")
-            elif ml <= 0:
-                st.warning("Indique mililitros > 0.")
-            else:
-                stock_disp = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Stock disponible"].iloc[0])
-                if ml > stock_disp:
-                    st.error(f"Stock insuficiente. Disponible: {stock_disp:g} ml")
-                else:
-                    total = ml * costo_actual
-                    st.session_state.pedido_items.append((prod_sel, ml, costo_actual, total))
-
-        if st.session_state.pedido_items:
-            st.markdown("#### Carrito del Pedido")
-            cart_df = pd.DataFrame(st.session_state.pedido_items, columns=["Producto","ML","Costo x ml","Total"])
-            st.dataframe(cart_df, use_container_width=True, height=min(360, 36*(len(cart_df)+1)))
-            total_general = float(cart_df["Total"].sum())
-            st.metric("Total del pedido", f"${total_general:,.2f}")
-
-        requiere_envio = st.checkbox("¿Requiere envío?")
-        datos_envio = []
-        if requiere_envio:
-            with st.expander("📦 Datos de envío", expanded=False):
-                nombre_dest = st.text_input("Destinatario")
-                calle = st.text_input("Calle y número")
-                colonia = st.text_input("Colonia")
-                cp = st.text_input("Código Postal")
-                ciudad = st.text_input("Ciudad")
-                estado = st.text_input("Estado")
-                telefono = st.text_input("Teléfono")
-                referencia = st.text_area("Referencia")
-                datos_envio = [None, None, nombre_dest, calle, colonia, cp, ciudad, estado, telefono, referencia]
-
-        submitted = st.form_submit_button("💾 Guardar Pedido", type="primary")
-
-    if submitted:
-        if not cliente.strip():
-            st.error("Ingrese el nombre del cliente.")
-        elif not st.session_state.pedido_items:
-            st.error("Agregue al menos un producto.")
-        else:
-            nuevas_filas = []
-            for prod, ml_val, costo_val, total_val in st.session_state.pedido_items:
-                nuevas_filas.append({
-                    "# Pedido": pedido_id,
-                    "Nombre Cliente": cliente.strip(),
-                    "Fecha": fecha.strftime("%Y-%m-%d"),
-                    "Producto": prod,
-                    "Mililitros": float(ml_val),
-                    "Costo x ml": float(costo_val),
-                    "Total": float(total_val),
-                    "Estatus": estatus
-                })
-                idx = productos_df.index[productos_df["Producto"]==prod][0]
-                productos_df.at[idx, "Stock disponible"] = float(productos_df.at[idx, "Stock disponible"]) - float(ml_val)
-
-            pedidos_df_new = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
-            save_pedidos_df(pedidos_df_new)
-            save_productos_df(productos_df)
-
-            if requiere_envio and datos_envio:
-                datos_envio[0] = pedido_id
-                datos_envio[1] = cliente.strip()
-                append_envio_row(datos_envio)
-
-            st.success(f"Pedido #{pedido_id} guardado.")
-            img_bytes = generar_imagen_pedido(
-                pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"),
-                estatus, st.session_state.pedido_items,
-                logo_url=LOGO_URL
-            )
-            st.image(img_bytes, caption=f"Pedido #{pedido_id}", use_column_width=True)
-            st.download_button(
-                "⬇️ Descargar Imagen", img_bytes,
-                file_name=f"Pedido_{pedido_id}_{cliente.replace(' ','')}.png",
-                mime="image/png"
-            )
-
-            st.session_state.pedido_items = []
-            st.session_state.nueva_sesion = True
-            if RERUN:
-                RERUN()
 
 # =====================
 # TAB 2: HISTORIAL
