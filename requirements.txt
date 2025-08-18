@@ -1,8 +1,13 @@
-streamlit
-gspread
+#streamlit
+#gspread
 pandas
 python-dateutil
 pillow
 requests
-fpdf
+#fpdf
 # fpdf  # opcional si ya no generas PDF
+
+streamlit==1.38.0
+gspread==5.12.4
+google-auth==2.30.0
+fpdf==1.7.2
