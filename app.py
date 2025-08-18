@@ -1,8 +1,7 @@
-# app.py — H DECANTS (v7: PDF Latin-1 safe + descarga directa)
-# ============================================================
+# app.py — H DECANTS (v8: PDF Latin-1 blindado + descarga directa)
+# ===============================================================
 
 import os
-import io
 import base64
 from datetime import datetime
 from typing import List, Tuple
@@ -52,6 +51,28 @@ def get_client_and_ws():
 client, sheet, productos_ws, pedidos_ws, envios_ws = get_client_and_ws()
 
 # =====================
+# HELPERS (Latin-1 / descarga)
+# =====================
+def _latin1(s) -> str:
+    """Convierte a Latin-1 eliminando lo que no se pueda representar (emojis, comillas curvas, ™, etc.)."""
+    if s is None:
+        return ""
+    if not isinstance(s, str):
+        s = str(s)
+    return s.encode("latin-1", "ignore").decode("latin-1")
+
+def _fmt_money(x) -> str:
+    try:
+        return f"${float(x):,.2f}"
+    except Exception:
+        return "$0.00"
+
+def link_descarga_pdf(pdf_bytes: bytes, filename: str) -> str:
+    """Devuelve un <a download> para forzar descarga sin abrir pestaña."""
+    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    return f'<a href="data:application/pdf;base64,{b64}" download="{filename}">📥 Descargar PDF</a>'
+
+# =====================
 # CARGA / GUARDA DATOS
 # =====================
 @st.cache_data(ttl=60, show_spinner=False)
@@ -94,7 +115,7 @@ def append_envio_row(data: List):
     envios_ws.append_row(data)
 
 # =====================
-# UTILIDADES
+# UTILIDADES DE STOCK
 # =====================
 def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
     if pedidos_df.empty or "# Pedido" not in pedidos_df.columns:
@@ -102,15 +123,10 @@ def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
     return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
 
 def _get_product_row_idx(df: pd.DataFrame, nombre: str):
-    """Índice del producto o None si no existe."""
-    try:
-        idxs = df.index[df["Producto"] == nombre]
-        return None if len(idxs) == 0 else idxs[0]
-    except Exception:
-        return None
+    idxs = df.index[df["Producto"] == nombre]
+    return None if len(idxs) == 0 else idxs[0]
 
 def _get_stock(df: pd.DataFrame, idx) -> float:
-    """Stock numérico seguro."""
     try:
         val = pd.to_numeric(df.at[idx, "Stock disponible"], errors="coerce")
         return float(0.0 if pd.isna(val) else val)
@@ -118,7 +134,6 @@ def _get_stock(df: pd.DataFrame, idx) -> float:
         return 0.0
 
 def _set_stock(df: pd.DataFrame, idx, nuevo: float):
-    """Escribir stock >=0."""
     df.at[idx, "Stock disponible"] = max(0.0, round(float(nuevo), 3))
 
 def ensure_session_keys():
@@ -127,67 +142,76 @@ def ensure_session_keys():
 
 ensure_session_keys()
 
-def link_descarga_pdf(pdf_bytes: bytes, filename: str) -> str:
-    """Devuelve un <a download> para forzar descarga sin abrir pestaña."""
-    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-    return f'<a href="data:application/pdf;base64,{b64}" download="{filename}">📥 Descargar PDF</a>'
-
-def _latin1(s: str) -> str:
-    """Convierte a Latin-1 eliminando caracteres no representables (evita UnicodeEncodeError de FPDF 1.x)."""
-    if s is None:
-        return ""
-    if not isinstance(s, str):
-        s = str(s)
-    return s.encode("latin-1", "ignore").decode("latin-1")
-
 # =====================
-# PDF (Latin-1 safe)
+# PDF (Latin-1 blindado)
 # =====================
 def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
                 productos: List[Tuple[str, float, float, float]]) -> bytes:
+    # Sanitiza encabezados
+    s_pedido  = _latin1(f"Pedido #{pedido_id}")
+    s_cliente = _latin1(f"Cliente: {cliente}")
+    s_fecha   = _latin1(f"Fecha: {fecha}")
+    s_status  = _latin1(f"Estatus: {estatus}")
+
+    # Sanitiza filas
+    filas = []
+    total_general = 0.0
+    for fila in productos or []:
+        try:
+            nombre, ml, costo, total = fila
+        except Exception:
+            continue
+        nombre_s = _latin1(str(nombre))[:60]
+        ml_s     = _latin1(f"{float(ml):g}")
+        costo_s  = _latin1(_fmt_money(costo))
+        total_s  = _latin1(_fmt_money(total))
+        filas.append((nombre_s, ml_s, costo_s, total_s))
+        try:
+            total_general += float(total or 0.0)
+        except Exception:
+            pass
+
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Logo local si existe (no bloquea)
+    # Logo local si existe
     try:
         if os.path.exists(LOGO_LOCAL):
             pdf.image(LOGO_LOCAL, x=160, y=8, w=30)
     except Exception:
         pass
 
-    # Encabezado (sin emojis para evitar Unicode)
+    # Encabezado
     pdf.set_font("Arial", "B", 15)
-    pdf.cell(0, 10, _latin1(f"Pedido #{pedido_id}"), ln=True)
+    pdf.cell(0, 10, s_pedido, ln=True)
 
     pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 8, _latin1(f"Cliente: {cliente}"), ln=True)
-    pdf.cell(0, 8, _latin1(f"Fecha: {fecha}"), ln=True)
-    pdf.cell(0, 8, _latin1(f"Estatus: {estatus}"), ln=True)
+    pdf.cell(0, 8, s_cliente, ln=True)
+    pdf.cell(0, 8, s_fecha, ln=True)
+    pdf.cell(0, 8, s_status, ln=True)
     pdf.ln(4)
 
     # Tabla
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(90, 9, _latin1("Producto"), 1)
-    pdf.cell(25, 9, _latin1("ML"), 1, 0, "C")
-    pdf.cell(35, 9, _latin1("Costo/ml"), 1, 0, "C")
-    pdf.cell(35, 9, _latin1("Total"), 1, 1, "C")
+    pdf.cell(90,  9, _latin1("Producto"), 1)
+    pdf.cell(25,  9, _latin1("ML"),       1, 0, "C")
+    pdf.cell(35,  9, _latin1("Costo/ml"), 1, 0, "C")
+    pdf.cell(35,  9, _latin1("Total"),    1, 1, "C")
 
-    total_general = 0.0
     pdf.set_font("Arial", "", 11)
-    for nombre, ml, costo, total in productos:
-        total_general += float(total or 0.0)
-        pdf.cell(90, 8, _latin1(str(nombre)[:60]), 1)
-        pdf.cell(25, 8, _latin1(f"{ml:g}"), 1, 0, "C")
-        pdf.cell(35, 8, _latin1(f"${costo:,.2f}"), 1, 0, "R")
-        pdf.cell(35, 8, _latin1(f"${float(total):,.2f}"), 1, 1, "R")
+    for nombre_s, ml_s, costo_s, total_s in filas:
+        pdf.cell(90, 8, nombre_s, 1)
+        pdf.cell(25, 8, ml_s,      1, 0, "C")
+        pdf.cell(35, 8, costo_s,   1, 0, "R")
+        pdf.cell(35, 8, total_s,   1, 1, "R")
 
     pdf.set_font("Arial", "B", 12)
     pdf.cell(150, 9, _latin1("TOTAL GENERAL"), 1, 0, "R")
-    pdf.cell(35, 9, _latin1(f"${total_general:,.2f}"), 1, 1, "R")
+    pdf.cell(35,  9, _latin1(_fmt_money(total_general)), 1, 1, "R")
     pdf.ln(6)
 
-    # Leyenda de pago (sin emojis)
+    # Leyenda (sin emojis)
     pdf.set_draw_color(210, 210, 210)
     x1, y1 = 10, pdf.get_y()
     pdf.line(x1, y1, 200, y1)
@@ -203,8 +227,9 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     )
     pdf.multi_cell(0, 6, _latin1(leyenda))
 
-    # Exportar (bytes)
-    return pdf.output(dest="S").encode("latin-1")
+    # Exportar (si FPDF devuelve str en vez de bytes, fuerza latin-1)
+    raw = pdf.output(dest="S")
+    return raw if isinstance(raw, bytes) else raw.encode("latin-1", "ignore")
 
 # =====================
 # DATOS INICIALES
@@ -326,14 +351,11 @@ with tab1:
                     "Total": float(total_val),
                     "Estatus": estatus
                 })
-                # Ajuste de stock seguro
                 if not productos_df.empty:
                     idx = _get_product_row_idx(productos_df, prod)
                     if idx is not None:
                         stock_disp = _get_stock(productos_df, idx)
                         _set_stock(productos_df, idx, stock_disp - float(ml_val))
-                    else:
-                        st.warning(f"⚠️ El producto '{prod}' no existe en 'Productos'. No se ajustó stock.")
 
             pedidos_df_new = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
             save_pedidos_df(pedidos_df_new)
@@ -528,4 +550,4 @@ with tab3:
 # =====================
 # FOOTER
 # =====================
-st.caption("v7 — PDF Latin-1 safe, descarga directa, historial editable y stock robusto.")
+st.caption("v8 — PDF Latin-1 blindado, descarga directa, historial editable y stock robusto.")
