@@ -256,16 +256,36 @@ with tab1:
 
         st.markdown("### 🧴 Productos")
         c1, c2, c3, c4 = st.columns([3,1.2,1.2,0.9])
+
         with c1:
-            search = st.text_input("Buscar producto", placeholder="Escribe parte del nombre")
-            opciones = productos_df[productos_df["Producto"].str.contains(search, case=False, na=False)] if (not productos_df.empty and search) else productos_df
-            opciones = opciones if not opciones.empty else pd.DataFrame(columns=["Producto","Costo x ml","Stock disponible"])
-            prod_sel = st.selectbox("Producto", opciones["Producto"].tolist() or ["—"], index=0)
+            search = st.text_input("Buscar producto", placeholder="Escribe parte del nombre", key="buscador_prod")
+    # filtra opciones
+            if not productos_df.empty:
+                base_opts = productos_df["Producto"].astype(str)
+                opciones = base_opts[base_opts.str.contains(search, case=False, na=False)] if search else base_opts
+                opts_list = opciones.tolist()
+            else:
+                opts_list = []
+
+    # multiselect como select de un solo elemento
+            prod_pick = st.multiselect(
+                "Producto",
+                options=opts_list,
+                default=opts_list[:1],     # si hay, precarga el primero
+                key="picker_producto"
+            )
+                prod_sel = prod_pick[0] if prod_pick else "—"
+
         with c2:
             ml = st.number_input("ML", min_value=0.0, step=0.5, value=0.0)
+
         with c3:
-            costo_actual = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Costo x ml"].iloc[0]) if (not productos_df.empty and prod_sel in productos_df["Producto"].values) else 0.0
-            st.number_input("Costo/ml (ref)", value=float(costo_actual), disabled=True)
+            if not productos_df.empty and prod_sel in productos_df["Producto"].values:
+                costo_actual = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Costo x ml"].iloc[0])
+            else:
+                costo_actual = 0.0
+            st.number_input("Costo/ml (ref)", value=float(costo_actual), disabled=True, key="costo_ref")
+
         with c4:
             st.write("")
             add = st.form_submit_button("➕ Agregar")
