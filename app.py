@@ -1,5 +1,5 @@
-# app.py — H DECANTS (v5 robusta)
-# ================================
+# app.py — H DECANTS (v6: descarga directa de PDF sin abrir pestaña)
+# =================================================================
 import os
 import base64
 from datetime import datetime
@@ -57,7 +57,6 @@ def load_productos_df() -> pd.DataFrame:
     df = pd.DataFrame(productos_ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
-    # Fijar tipos numéricos
     if "Costo x ml" in df:
         df["Costo x ml"] = pd.to_numeric(df["Costo x ml"], errors="coerce").fillna(0.0)
     if "Stock disponible" in df:
@@ -69,7 +68,6 @@ def load_pedidos_df() -> pd.DataFrame:
     df = pd.DataFrame(pedidos_ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
-    # Fijar tipos numéricos
     for col in ["# Pedido", "Mililitros"]:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
@@ -100,7 +98,6 @@ def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
     return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
 
 def _get_product_row_idx(df: pd.DataFrame, nombre: str):
-    """Índice del producto o None si no existe."""
     try:
         idxs = df.index[df["Producto"] == nombre]
         return None if len(idxs) == 0 else idxs[0]
@@ -108,7 +105,6 @@ def _get_product_row_idx(df: pd.DataFrame, nombre: str):
         return None
 
 def _get_stock(df: pd.DataFrame, idx) -> float:
-    """Stock numérico seguro."""
     try:
         val = pd.to_numeric(df.at[idx, "Stock disponible"], errors="coerce")
         return float(0.0 if pd.isna(val) else val)
@@ -116,14 +112,19 @@ def _get_stock(df: pd.DataFrame, idx) -> float:
         return 0.0
 
 def _set_stock(df: pd.DataFrame, idx, nuevo: float):
-    """Escribir stock >=0."""
     df.at[idx, "Stock disponible"] = max(0.0, round(float(nuevo), 3))
 
 def ensure_session_keys():
     st.session_state.setdefault("pedido_items", [])   # [(prod, ml, costo, total)]
     st.session_state.setdefault("nueva_sesion", False)
+    st.session_state.setdefault("ultimo_pdf_b64", None)
+    st.session_state.setdefault("ultimo_pdf_nombre", None)
 
 ensure_session_keys()
+
+def link_descarga_pdf(pdf_bytes: bytes, filename: str) -> str:
+    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    return f'<a href="data:application/pdf;base64,{b64}" download="{filename}">⬇️ Descargar PDF</a>'
 
 # =====================
 # PDF
@@ -237,10 +238,12 @@ tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Producto
 # TAB 1: NUEVO PEDIDO
 # =====================
 with tab1:
-    # Reset de carrito si venimos de guardar
+    # Reset de carrito si venimos de guardar y limpiar
     if st.session_state.get("nueva_sesion", False):
         st.session_state.pedido_items = []
         st.session_state.nueva_sesion = False
+        st.session_state.ultimo_pdf_b64 = None
+        st.session_state.ultimo_pdf_nombre = None
 
     with st.form("form_pedido", clear_on_submit=False):
         col_a, col_b, col_c = st.columns([3,1.5,1.5])
@@ -311,9 +314,7 @@ with tab1:
         submitted = st.form_submit_button("💾 Guardar Pedido", type="primary")
 
     if submitted:
-        # ============ PUNTO CRÍTICO ============
-        # Copiamos el carrito ANTES de tocar el estado/cachés para evitar "carrito vacío"
-        cart_items = list(st.session_state.pedido_items)
+        cart_items = list(st.session_state.pedido_items)  # Copia antes de tocar estado
 
         if not cliente or not cliente.strip():
             st.error("Ingrese el nombre del cliente.")
@@ -354,18 +355,24 @@ with tab1:
 
             st.success(f"Pedido #{pedido_id} guardado.")
 
-            # Generar PDF usando cart_items (NO del estado)
+            # ========== FORZAR DESCARGA SIN ABRIR ==========
             pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, cart_items)
-            st.download_button(
-                "⬇️ Descargar PDF",
-                pdf_bytes,
-                file_name=f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf",
-                mime="application/pdf"
+            filename = f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf"
+            st.session_state.ultimo_pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+            st.session_state.ultimo_pdf_nombre = filename
+            st.markdown(
+                f'<div style="padding:8px 0">{link_descarga_pdf(pdf_bytes, filename)}</div>',
+                unsafe_allow_html=True
             )
+            st.info("Puedes descargar el PDF arriba. Cuando termines, presiona el botón de abajo para limpiar y tomar otro pedido.")
 
-            # Limpiar carrito y forzar nueva sesión
+    # Botón para limpiar y preparar nueva sesión (esto sí hace rerun)
+    if st.session_state.get("ultimo_pdf_b64"):
+        if st.button("🧹 Finalizar y limpiar"):
             st.session_state.pedido_items = []
             st.session_state.nueva_sesion = True
+            st.session_state.ultimo_pdf_b64 = None
+            st.session_state.ultimo_pdf_nombre = None
             st.rerun()
 
 # =====================
@@ -470,11 +477,8 @@ with tab2:
                 fecha_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Fecha"].iloc[0]
                 estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Estatus"].iloc[-1]
                 pdf_bytes = generar_pdf(pedido_sel, cliente_sel, fecha_pdf, estatus_pdf, productos_pdf)
-                st.download_button("📥 Descargar PDF",
-                                   pdf_bytes,
-                                   file_name=f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf",
-                                   mime="application/pdf",
-                                   key=f"dl_{pedido_sel}")
+                filename_hist = f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf"
+                st.markdown(link_descarga_pdf(pdf_bytes, filename_hist), unsafe_allow_html=True)
 
             if dup:
                 base = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
@@ -531,7 +535,6 @@ with tab3:
             key="prod_editor"
         )
         if st.button("💾 Guardar cambios de productos"):
-            # Validar no negativos
             if edited_prod["Costo x ml"].lt(0).any() or edited_prod["Stock disponible"].lt(0).any():
                 st.error("Costo y stock deben ser >= 0.")
             else:
@@ -542,4 +545,4 @@ with tab3:
 # =====================
 # FOOTER
 # =====================
-st.caption("v5 — PDF estable, historial editable y stock robusto.")
+st.caption("v6 — Descarga de PDF forzada (sin abrir), historial editable y stock robusto.")
