@@ -1,5 +1,5 @@
-# app.py — H DECANTS (PDF + Historial editable + Productos)
-# =========================================================
+# app.py — H DECANTS (v5 robusta)
+# ================================
 import os
 import base64
 from datetime import datetime
@@ -18,7 +18,6 @@ from dateutil.relativedelta import relativedelta
 st.set_page_config(page_title="H DECANTS — Gestión de Pedidos", layout="wide")
 
 LOGO_URL = "https://raw.githubusercontent.com/HarimEG/app-decants/main/hdecants_logo.jpg"
-# Si tienes el logo local en el repo, pon el archivo "hdecants_logo.jpg" junto a app.py
 LOGO_LOCAL = "hdecants_logo.jpg"
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1bjV4EaDNNbJfN4huzbNpTFmj-vfCr7A2474jhO81-bE/edit?gid=1318862509#gid=1318862509"
@@ -58,6 +57,7 @@ def load_productos_df() -> pd.DataFrame:
     df = pd.DataFrame(productos_ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
+    # Fijar tipos numéricos
     if "Costo x ml" in df:
         df["Costo x ml"] = pd.to_numeric(df["Costo x ml"], errors="coerce").fillna(0.0)
     if "Stock disponible" in df:
@@ -69,9 +69,10 @@ def load_pedidos_df() -> pd.DataFrame:
     df = pd.DataFrame(pedidos_ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
+    # Fijar tipos numéricos
     for col in ["# Pedido", "Mililitros"]:
         if col in df:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     for col in ["Costo x ml","Total"]:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
@@ -98,17 +99,39 @@ def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
         return 1
     return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
 
-def link_pdf(bytes_pdf: bytes, filename: str) -> str:
-    b64 = base64.b64encode(bytes_pdf).decode("utf-8")
-    return f'<a href="data:application/pdf;base64,{b64}" target="_blank">📄 Ver PDF</a>', b64
+def _get_product_row_idx(df: pd.DataFrame, nombre: str):
+    """Índice del producto o None si no existe."""
+    try:
+        idxs = df.index[df["Producto"] == nombre]
+        return None if len(idxs) == 0 else idxs[0]
+    except Exception:
+        return None
+
+def _get_stock(df: pd.DataFrame, idx) -> float:
+    """Stock numérico seguro."""
+    try:
+        val = pd.to_numeric(df.at[idx, "Stock disponible"], errors="coerce")
+        return float(0.0 if pd.isna(val) else val)
+    except Exception:
+        return 0.0
+
+def _set_stock(df: pd.DataFrame, idx, nuevo: float):
+    """Escribir stock >=0."""
+    df.at[idx, "Stock disponible"] = max(0.0, round(float(nuevo), 3))
+
+def ensure_session_keys():
+    st.session_state.setdefault("pedido_items", [])   # [(prod, ml, costo, total)]
+    st.session_state.setdefault("nueva_sesion", False)
+
+ensure_session_keys()
 
 # =====================
 # PDF
 # =====================
 def _try_load_unicode_font(pdf: FPDF) -> bool:
     """
-    Intenta usar DejaVuSans.ttf (sube ese archivo junto a app.py) para poder imprimir emojis/acentos.
-    Si no está, usa Arial y el PDF se genera igual (sin emojis).
+    Usa DejaVuSans.ttf si está junto a app.py para emojis/acentos.
+    Si no existe, usa Arial (sin emojis).
     """
     try:
         font_path = os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf")
@@ -128,7 +151,7 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Logo si existe local
+    # Logo local si existe (no bloquea)
     try:
         if os.path.exists(LOGO_LOCAL):
             pdf.image(LOGO_LOCAL, x=160, y=8, w=30)
@@ -161,7 +184,7 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
         pdf.cell(90, 8, str(nombre)[:60], 1)
         pdf.cell(25, 8, f"{ml:g}", 1, 0, "C")
         pdf.cell(35, 8, f"${costo:,.2f}", 1, 0, "R")
-        pdf.cell(35, 8, f"${total:,.2f}", 1, 1, "R")
+        pdf.cell(35, 8, f"${float(total):,.2f}", 1, 1, "R")
 
     pdf.set_font("DejaVu" if unicode_ok else "Arial", "B", 12)
     pdf.cell(150, 9, "TOTAL GENERAL", 1, 0, "R")
@@ -199,15 +222,6 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
         return pdf.output(dest="S").encode("latin1", "ignore")
 
 # =====================
-# SESIÓN
-# =====================
-def ensure_session_keys():
-    st.session_state.setdefault("pedido_items", [])
-    st.session_state.setdefault("nueva_sesion", False)
-
-ensure_session_keys()
-
-# =====================
 # DATOS INICIALES
 # =====================
 productos_df = load_productos_df()
@@ -223,6 +237,7 @@ tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Producto
 # TAB 1: NUEVO PEDIDO
 # =====================
 with tab1:
+    # Reset de carrito si venimos de guardar
     if st.session_state.get("nueva_sesion", False):
         st.session_state.pedido_items = []
         st.session_state.nueva_sesion = False
@@ -237,16 +252,16 @@ with tab1:
             estatus = st.selectbox("📌 Estatus", ESTATUS_LIST, index=0)
 
         st.markdown("### 🧴 Productos")
-        c1, c2, c3, c4 = st.columns([3,1.2,1.2,0.8])
+        c1, c2, c3, c4 = st.columns([3,1.2,1.2,0.9])
         with c1:
             search = st.text_input("Buscar producto", placeholder="Escribe parte del nombre")
-            opciones = productos_df[productos_df["Producto"].str.contains(search, case=False, na=False)] if not productos_df.empty and search else productos_df
+            opciones = productos_df[productos_df["Producto"].str.contains(search, case=False, na=False)] if (not productos_df.empty and search) else productos_df
             opciones = opciones if not opciones.empty else pd.DataFrame(columns=["Producto","Costo x ml","Stock disponible"])
             prod_sel = st.selectbox("Producto", opciones["Producto"].tolist() or ["—"], index=0)
         with c2:
             ml = st.number_input("ML", min_value=0.0, step=0.5, value=0.0)
         with c3:
-            costo_actual = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Costo x ml"].iloc[0]) if not productos_df.empty and prod_sel in productos_df["Producto"].values else 0.0
+            costo_actual = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Costo x ml"].iloc[0]) if (not productos_df.empty and prod_sel in productos_df["Producto"].values) else 0.0
             st.number_input("Costo/ml (ref)", value=float(costo_actual), disabled=True)
         with c4:
             st.write("")
@@ -259,7 +274,8 @@ with tab1:
                 st.warning("Indique mililitros > 0.")
             else:
                 if not productos_df.empty and prod_sel in productos_df["Producto"].values:
-                    stock_disp = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Stock disponible"].iloc[0])
+                    idx = _get_product_row_idx(productos_df, prod_sel)
+                    stock_disp = _get_stock(productos_df, idx) if idx is not None else 0.0
                 else:
                     stock_disp = 0.0
                 if ml > stock_disp:
@@ -295,14 +311,18 @@ with tab1:
         submitted = st.form_submit_button("💾 Guardar Pedido", type="primary")
 
     if submitted:
+        # ============ PUNTO CRÍTICO ============
+        # Copiamos el carrito ANTES de tocar el estado/cachés para evitar "carrito vacío"
+        cart_items = list(st.session_state.pedido_items)
+
         if not cliente or not cliente.strip():
             st.error("Ingrese el nombre del cliente.")
-        elif not st.session_state.pedido_items:
-            st.error("Agregue al menos un producto.")
+        elif not cart_items:
+            st.error("El carrito está vacío. Agregue al menos un producto.")
         else:
             # Guardar filas en 'Pedidos' y ajustar stock
             nuevas_filas = []
-            for prod, ml_val, costo_val, total_val in st.session_state.pedido_items:
+            for prod, ml_val, costo_val, total_val in cart_items:
                 nuevas_filas.append({
                     "# Pedido": pedido_id,
                     "Nombre Cliente": cliente.strip(),
@@ -313,9 +333,14 @@ with tab1:
                     "Total": float(total_val),
                     "Estatus": estatus
                 })
-                if not productos_df.empty and prod in productos_df["Producto"].values:
-                    idx = productos_df.index[productos_df["Producto"]==prod][0]
-                    productos_df.at[idx, "Stock disponible"] = float(productos_df.at[idx, "Stock disponible"]) - float(ml_val)
+                # Ajuste de stock seguro
+                if not productos_df.empty:
+                    idx = _get_product_row_idx(productos_df, prod)
+                    if idx is not None:
+                        stock_disp = _get_stock(productos_df, idx)
+                        _set_stock(productos_df, idx, stock_disp - float(ml_val))
+                    else:
+                        st.warning(f"⚠️ El producto '{prod}' no existe en 'Productos'. No se ajustó stock.")
 
             pedidos_df_new = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
             save_pedidos_df(pedidos_df_new)
@@ -329,8 +354,8 @@ with tab1:
 
             st.success(f"Pedido #{pedido_id} guardado.")
 
-            # PDF
-            pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, st.session_state.pedido_items)
+            # Generar PDF usando cart_items (NO del estado)
+            pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, cart_items)
             st.download_button(
                 "⬇️ Descargar PDF",
                 pdf_bytes,
@@ -338,18 +363,17 @@ with tab1:
                 mime="application/pdf"
             )
 
-            # Reset
+            # Limpiar carrito y forzar nueva sesión
             st.session_state.pedido_items = []
             st.session_state.nueva_sesion = True
             st.rerun()
 
 # =====================
-# TAB 2: HISTORIAL (con editor y PDF)
+# TAB 2: HISTORIAL (editor + PDF + duplicar)
 # =====================
 with tab2:
     st.subheader("📋 Historial y Edición de Pedidos")
 
-    # Filtros
     colf1, colf2, colf3 = st.columns([2,1,1])
     with colf1:
         filtro_cli = st.text_input("🔍 Cliente (contiene)", placeholder="Ej. Ana")
@@ -382,10 +406,10 @@ with tab2:
             st.markdown(f"### Pedido #{pedido_sel} — {cliente_sel}")
             st.write(f"Estatus actual: **{estatus_actual}**")
 
-            # Editor: solo ML editable; Total recalculado
+            # Editor (ML editable)
             editable = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].copy()
-            editable["Mililitros"] = pd.to_numeric(editable["Mililitros"], errors="coerce")
-            editable["Costo x ml"] = pd.to_numeric(editable["Costo x ml"], errors="coerce")
+            editable["Mililitros"] = pd.to_numeric(editable["Mililitros"], errors="coerce").fillna(0.0)
+            editable["Costo x ml"] = pd.to_numeric(editable["Costo x ml"], errors="coerce").fillna(0.0)
             editable["Total"] = (editable["Mililitros"] * editable["Costo x ml"]).round(2)
 
             edited = st.data_editor(
@@ -408,7 +432,6 @@ with tab2:
                 dup = st.button("🧬 Duplicar pedido", key=f"dup_{pedido_sel}")
 
             if apply_changes:
-                # calcular diferencias y ajustar stock
                 cambios = edited.merge(pedido_rows[["Producto","Mililitros"]], on="Producto", how="left", suffixes=("_new","_old"))
                 modificaciones = []
                 for _, r in cambios.iterrows():
@@ -416,22 +439,25 @@ with tab2:
                     ml_new = float(r["Mililitros_new"])
                     if ml_new != ml_old:
                         diff = ml_new - ml_old
-                        idxp = productos_df.index[productos_df["Producto"]==r["Producto"]][0]
-                        stock_disp = float(productos_df.at[idxp, "Stock disponible"])
-                        if diff > 0 and diff > stock_disp:
-                            st.error(f"Stock insuficiente para '{r['Producto']}'. Disponible: {stock_disp:g} ml")
-                            st.stop()
-                        productos_df.at[idxp, "Stock disponible"] = stock_disp - diff
+                        idxp = _get_product_row_idx(productos_df, r["Producto"])
+                        if idxp is None:
+                            st.warning(f"⚠️ '{r['Producto']}' no existe en 'Productos'. No se ajustó stock.")
+                        else:
+                            stock_disp = _get_stock(productos_df, idxp)
+                            if diff > 0 and diff > stock_disp:
+                                st.error(f"Stock insuficiente para '{r['Producto']}'. Disponible: {stock_disp:g} ml")
+                                st.stop()
+                            _set_stock(productos_df, idxp, stock_disp - diff)
                         modificaciones.append((r["Producto"], ml_new))
 
-                # aplicar cambios en pedidos_df
+                # Aplicar modificaciones a pedidos_df
                 for prod, ml_new in modificaciones:
                     mask = (pedidos_df["# Pedido"] == pedido_sel) & (pedidos_df["Producto"] == prod)
                     pedidos_df.loc[mask, "Mililitros"] = ml_new
                     costo = float(pedidos_df.loc[mask, "Costo x ml"].iloc[0])
                     pedidos_df.loc[mask, "Total"] = float(ml_new) * costo
 
-                # estatus
+                # Estatus
                 pedidos_df.loc[pedidos_df["# Pedido"] == pedido_sel, "Estatus"] = nuevo_estatus
 
                 save_pedidos_df(pedidos_df)
@@ -505,6 +531,7 @@ with tab3:
             key="prod_editor"
         )
         if st.button("💾 Guardar cambios de productos"):
+            # Validar no negativos
             if edited_prod["Costo x ml"].lt(0).any() or edited_prod["Stock disponible"].lt(0).any():
                 st.error("Costo y stock deben ser >= 0.")
             else:
@@ -515,4 +542,4 @@ with tab3:
 # =====================
 # FOOTER
 # =====================
-st.caption("v4 — PDF con leyenda de pago, historial editable y productos CRUD.")
+st.caption("v5 — PDF estable, historial editable y stock robusto.")
