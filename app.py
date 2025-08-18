@@ -1,27 +1,27 @@
-# app.py — H DECANTS (v3)
-# =======================
-# - PDF con leyenda de pago
-# - Selector de producto optimizado para móvil
-# - Editor inline de pedidos con ajuste de stock
-# - CRUD de productos
-# - Evita rerun inmediato tras guardar (PDF permanece)
-# - Compatible con Python 3.9
+# app.py — H DECANTS (v7: PDF Latin-1 safe + descarga directa)
+# ============================================================
+
+import os
+import io
+import base64
+from datetime import datetime
+from typing import List, Tuple
 
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
-from datetime import datetime
 from dateutil.relativedelta import relativedelta
-from typing import List, Tuple
-import base64
 
 # =====================
 # CONFIG Y CONSTANTES
 # =====================
-st.set_page_config(page_title="H DECANTS", layout="wide")
+st.set_page_config(page_title="H DECANTS — Gestión de Pedidos", layout="wide")
+
 LOGO_URL = "https://raw.githubusercontent.com/HarimEG/app-decants/main/hdecants_logo.jpg"
+LOGO_LOCAL = "hdecants_logo.jpg"
+
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1bjV4EaDNNbJfN4huzbNpTFmj-vfCr7A2474jhO81-bE/edit?gid=1318862509#gid=1318862509"
 SHEET_TAB_PRODUCTOS = "Productos"
 SHEET_TAB_PEDIDOS   = "Pedidos"
@@ -59,10 +59,11 @@ def load_productos_df() -> pd.DataFrame:
     df = pd.DataFrame(productos_ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
+    df["Producto"] = df.get("Producto", pd.Series(dtype=str)).astype(str)
     if "Costo x ml" in df:
         df["Costo x ml"] = pd.to_numeric(df["Costo x ml"], errors="coerce").fillna(0.0)
     if "Stock disponible" in df:
-        df["Stock disponible"] = pd.to_numeric(df["Stock disponible"], errors="coerce").fillna(0)
+        df["Stock disponible"] = pd.to_numeric(df["Stock disponible"], errors="coerce").fillna(0.0)
     return df
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -70,9 +71,10 @@ def load_pedidos_df() -> pd.DataFrame:
     df = pd.DataFrame(pedidos_ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
+    df["Producto"] = df.get("Producto", pd.Series(dtype=str)).astype(str)
     for col in ["# Pedido", "Mililitros"]:
         if col in df:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     for col in ["Costo x ml","Total"]:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
@@ -99,73 +101,110 @@ def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
         return 1
     return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
 
+def _get_product_row_idx(df: pd.DataFrame, nombre: str):
+    """Índice del producto o None si no existe."""
+    try:
+        idxs = df.index[df["Producto"] == nombre]
+        return None if len(idxs) == 0 else idxs[0]
+    except Exception:
+        return None
+
+def _get_stock(df: pd.DataFrame, idx) -> float:
+    """Stock numérico seguro."""
+    try:
+        val = pd.to_numeric(df.at[idx, "Stock disponible"], errors="coerce")
+        return float(0.0 if pd.isna(val) else val)
+    except Exception:
+        return 0.0
+
+def _set_stock(df: pd.DataFrame, idx, nuevo: float):
+    """Escribir stock >=0."""
+    df.at[idx, "Stock disponible"] = max(0.0, round(float(nuevo), 3))
+
+def ensure_session_keys():
+    st.session_state.setdefault("pedido_items", [])   # [(prod, ml, costo, total)]
+    st.session_state.setdefault("nueva_sesion", False)
+
+ensure_session_keys()
+
+def link_descarga_pdf(pdf_bytes: bytes, filename: str) -> str:
+    """Devuelve un <a download> para forzar descarga sin abrir pestaña."""
+    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    return f'<a href="data:application/pdf;base64,{b64}" download="{filename}">📥 Descargar PDF</a>'
+
+def _latin1(s: str) -> str:
+    """Convierte a Latin-1 eliminando caracteres no representables (evita UnicodeEncodeError de FPDF 1.x)."""
+    if s is None:
+        return ""
+    if not isinstance(s, str):
+        s = str(s)
+    return s.encode("latin-1", "ignore").decode("latin-1")
+
+# =====================
+# PDF (Latin-1 safe)
+# =====================
 def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
                 productos: List[Tuple[str, float, float, float]]) -> bytes:
-    """
-    Genera un PDF con el detalle del pedido y una leyenda de pago al final.
-    """
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Logo (si existe local, si no, ignoramos)
+    # Logo local si existe (no bloquea)
     try:
-        pdf.image("hdecants_logo.jpg", x=160, y=10, w=35)
+        if os.path.exists(LOGO_LOCAL):
+            pdf.image(LOGO_LOCAL, x=160, y=8, w=30)
     except Exception:
         pass
 
-    pdf.set_auto_page_break(auto=True, margin=15)
-
-    # Encabezado
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, f"Pedido #{pedido_id}", ln=True)
+    # Encabezado (sin emojis para evitar Unicode)
+    pdf.set_font("Arial", "B", 15)
+    pdf.cell(0, 10, _latin1(f"Pedido #{pedido_id}"), ln=True)
 
     pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 8, f"Cliente: {cliente}", ln=True)
-    pdf.cell(0, 8, f"Fecha: {fecha}", ln=True)
-    pdf.cell(0, 8, f"Estatus: {estatus}", ln=True)
-    pdf.ln(6)
+    pdf.cell(0, 8, _latin1(f"Cliente: {cliente}"), ln=True)
+    pdf.cell(0, 8, _latin1(f"Fecha: {fecha}"), ln=True)
+    pdf.cell(0, 8, _latin1(f"Estatus: {estatus}"), ln=True)
+    pdf.ln(4)
 
     # Tabla
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(95, 9, "Producto", 1)
-    pdf.cell(20, 9, "ML", 1, 0, "C")
-    pdf.cell(35, 9, "Costo/ml", 1, 0, "C")
-    pdf.cell(35, 9, "Total", 1, 1, "C")
+    pdf.cell(90, 9, _latin1("Producto"), 1)
+    pdf.cell(25, 9, _latin1("ML"), 1, 0, "C")
+    pdf.cell(35, 9, _latin1("Costo/ml"), 1, 0, "C")
+    pdf.cell(35, 9, _latin1("Total"), 1, 1, "C")
 
     total_general = 0.0
     pdf.set_font("Arial", "", 11)
     for nombre, ml, costo, total in productos:
         total_general += float(total or 0.0)
-        nombre_str = str(nombre)[:60]
-        pdf.cell(95, 8, nombre_str, 1)
-        pdf.cell(20, 8, f"{ml:g}", 1, 0, "C")
-        pdf.cell(35, 8, f"${costo:.2f}", 1, 0, "R")
-        pdf.cell(35, 8, f"${total:.2f}", 1, 1, "R")
+        pdf.cell(90, 8, _latin1(str(nombre)[:60]), 1)
+        pdf.cell(25, 8, _latin1(f"{ml:g}"), 1, 0, "C")
+        pdf.cell(35, 8, _latin1(f"${costo:,.2f}"), 1, 0, "R")
+        pdf.cell(35, 8, _latin1(f"${float(total):,.2f}"), 1, 1, "R")
 
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(150, 9, "TOTAL", 1, 0, "R")
-    pdf.cell(35, 9, f"${total_general:.2f}", 1, 1, "R")
+    pdf.cell(150, 9, _latin1("TOTAL GENERAL"), 1, 0, "R")
+    pdf.cell(35, 9, _latin1(f"${total_general:,.2f}"), 1, 1, "R")
     pdf.ln(6)
 
-    # Leyenda de pago
+    # Leyenda de pago (sin emojis)
+    pdf.set_draw_color(210, 210, 210)
+    x1, y1 = 10, pdf.get_y()
+    pdf.line(x1, y1, 200, y1)
+    pdf.ln(6)
     pdf.set_font("Arial", "", 11)
-    pdf.multi_cell(
-        0, 7,
-        "💳 Forma de pago\n"
+    leyenda = (
+        "Forma de pago\n"
         "Banco: BBVA\n"
         "Titular: Harim Escalona\n"
         "Cuenta/Tarjeta: 4815 1632 0357 9563\n\n"
-        "✅ Si la cotización es correcta, realiza el pago y comparte el comprobante.\n"
-        "🚚 Una vez confirmado el pago, tu pedido se prepara y se envía."
+        "- Si la cotizacion es correcta, realiza el pago y comparte el comprobante.\n"
+        "- Una vez confirmado el pago, tu pedido se prepara y se envia."
     )
+    pdf.multi_cell(0, 6, _latin1(leyenda))
 
-    return pdf.output(dest="S").encode("latin1")
-
-def ensure_session_keys():
-    st.session_state.setdefault("pedido_items", [])
-    st.session_state.setdefault("nueva_sesion", False)
-
-ensure_session_keys()
+    # Exportar (bytes)
+    return pdf.output(dest="S").encode("latin-1")
 
 # =====================
 # DATOS INICIALES
@@ -183,6 +222,7 @@ tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Producto
 # TAB 1: NUEVO PEDIDO
 # =====================
 with tab1:
+    # Reset de carrito si venimos de limpiar
     if st.session_state.get("nueva_sesion", False):
         st.session_state.pedido_items = []
         st.session_state.nueva_sesion = False
@@ -228,7 +268,11 @@ with tab1:
             elif ml <= 0:
                 st.warning("Indique mililitros > 0.")
             else:
-                stock_disp = float(productos_df.loc[productos_df["Producto"]==prod_sel, "Stock disponible"].iloc[0])
+                if not productos_df.empty and prod_sel in productos_df["Producto"].values:
+                    idx = _get_product_row_idx(productos_df, prod_sel)
+                    stock_disp = _get_stock(productos_df, idx) if idx is not None else 0.0
+                else:
+                    stock_disp = 0.0
                 if ml > stock_disp:
                     st.error(f"Stock insuficiente. Disponible: {stock_disp:g} ml")
                 else:
@@ -244,6 +288,7 @@ with tab1:
         else:
             st.info("El carrito está vacío. Agrega al menos un producto.")
 
+        # Envío
         requiere_envio = st.checkbox("¿Requiere envío?")
         datos_envio = []
         if requiere_envio:
@@ -261,14 +306,16 @@ with tab1:
         submitted = st.form_submit_button("💾 Guardar Pedido", type="primary")
 
     if submitted:
-        if not cliente.strip():
+        cart_items = list(st.session_state.pedido_items)  # Copia antes de tocar estado
+
+        if not cliente or not cliente.strip():
             st.error("Ingrese el nombre del cliente.")
-        elif not st.session_state.pedido_items:
-            st.error("Agregue al menos un producto.")
+        elif not cart_items:
+            st.error("El carrito está vacío. Agregue al menos un producto.")
         else:
-            # Actualiza stock y agrega filas
+            # Guardar filas en 'Pedidos' y ajustar stock
             nuevas_filas = []
-            for prod, ml_val, costo_val, total_val in st.session_state.pedido_items:
+            for prod, ml_val, costo_val, total_val in cart_items:
                 nuevas_filas.append({
                     "# Pedido": pedido_id,
                     "Nombre Cliente": cliente.strip(),
@@ -279,13 +326,20 @@ with tab1:
                     "Total": float(total_val),
                     "Estatus": estatus
                 })
-                idx = productos_df.index[productos_df["Producto"]==prod][0]
-                productos_df.at[idx, "Stock disponible"] = float(productos_df.at[idx, "Stock disponible"]) - float(ml_val)
+                # Ajuste de stock seguro
+                if not productos_df.empty:
+                    idx = _get_product_row_idx(productos_df, prod)
+                    if idx is not None:
+                        stock_disp = _get_stock(productos_df, idx)
+                        _set_stock(productos_df, idx, stock_disp - float(ml_val))
+                    else:
+                        st.warning(f"⚠️ El producto '{prod}' no existe en 'Productos'. No se ajustó stock.")
 
             pedidos_df_new = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
             save_pedidos_df(pedidos_df_new)
             save_productos_df(productos_df)
 
+            # Guardar envío
             if requiere_envio and datos_envio:
                 datos_envio[0] = pedido_id
                 datos_envio[1] = cliente.strip()
@@ -293,65 +347,59 @@ with tab1:
 
             st.success(f"Pedido #{pedido_id} guardado.")
 
-            # Botón de descarga del PDF (no abre pestaña, descarga directo)
-            pdf_bytes = generar_pdf(
-                pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, st.session_state.pedido_items
-            )
-            st.download_button(
-                "📥 Descargar PDF",
-                pdf_bytes,
-                file_name=f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf",
-                mime="application/pdf"
-            )
+            # PDF (descarga directa sin abrir)
+            pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, cart_items)
+            filename = f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf"
+            st.markdown(link_descarga_pdf(pdf_bytes, filename), unsafe_allow_html=True)
 
-            # Botón para iniciar nueva cotización
-            if st.button("🆕 Nueva cotización"):
+            # Botón para limpiar y preparar nueva sesión
+            if st.button("🧹 Finalizar y limpiar"):
                 st.session_state.pedido_items = []
                 st.session_state.nueva_sesion = True
                 st.experimental_rerun()
 
 # =====================
-# TAB 2: HISTORIAL
+# TAB 2: HISTORIAL (editor + PDF + duplicar)
 # =====================
 with tab2:
     st.subheader("📋 Historial y Edición de Pedidos")
+
     colf1, colf2, colf3 = st.columns([2,1,1])
     with colf1:
         filtro_cli = st.text_input("🔍 Cliente (contiene)", placeholder="Ej. Ana")
     with colf2:
-        desde = st.date_input("Desde", value=datetime.today().date() - relativedelta(months=1))
+        desde = st.date_input("Desde", value=datetime.today().date() - relativedelta(months=6))
     with colf3:
         hasta = st.date_input("Hasta", value=datetime.today().date())
 
-    df_hist = load_pedidos_df().copy()
-    if filtro_cli:
-        df_hist = df_hist[df_hist["Nombre Cliente"].str.contains(filtro_cli, case=False, na=False)]
-    df_hist["Fecha_dt"] = pd.to_datetime(df_hist["Fecha"], errors="coerce")
-    df_hist = df_hist[(df_hist["Fecha_dt"]>=pd.to_datetime(desde)) & (df_hist["Fecha_dt"]<=pd.to_datetime(hasta))]
-    df_hist = df_hist.drop(columns=["Fecha_dt"])
-
-    st.dataframe(
-        df_hist.sort_values(["# Pedido","Fecha"]),
-        use_container_width=True,
-        height=420
-    )
-
+    df_hist = pedidos_df.copy()
     if not df_hist.empty:
-        pedidos_ids = sorted(df_hist["# Pedido"].dropna().unique().tolist())
-        pedido_sel = st.selectbox("Selecciona un pedido", pedidos_ids)
+        if filtro_cli:
+            df_hist = df_hist[df_hist["Nombre Cliente"].str.contains(filtro_cli, case=False, na=False)]
+        if "Fecha" in df_hist.columns:
+            df_hist["Fecha_dt"] = pd.to_datetime(df_hist["Fecha"], errors="coerce")
+            df_hist = df_hist[(df_hist["Fecha_dt"] >= pd.to_datetime(desde)) & (df_hist["Fecha_dt"] <= pd.to_datetime(hasta))]
+            df_hist = df_hist.drop(columns=["Fecha_dt"], errors="ignore")
 
-        pedido_rows = load_pedidos_df()
-        pedido_rows = pedido_rows[pedido_rows["# Pedido"] == pedido_sel].copy()
+    if df_hist.empty:
+        st.info("No hay pedidos para el rango/cliente seleccionados.")
+    else:
+        st.dataframe(df_hist.sort_values(["# Pedido","Fecha"]), use_container_width=True, height=420)
+
+        pedidos_ids = sorted(df_hist["# Pedido"].dropna().unique().tolist())
+        pedido_sel = st.selectbox("🧾 Selecciona un pedido para editar / PDF", pedidos_ids)
+
+        pedido_rows = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
         if not pedido_rows.empty:
             cliente_sel = pedido_rows["Nombre Cliente"].iloc[0]
             estatus_actual = pedido_rows["Estatus"].iloc[-1]
-
             st.markdown(f"### Pedido #{pedido_sel} — {cliente_sel}")
             st.write(f"Estatus actual: **{estatus_actual}**")
 
+            # Editor (ML editable)
             editable = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].copy()
-            editable["Mililitros"] = editable["Mililitros"].astype(float)
-            editable["Costo x ml"] = editable["Costo x ml"].astype(float)
+            editable["Mililitros"] = pd.to_numeric(editable["Mililitros"], errors="coerce").fillna(0.0)
+            editable["Costo x ml"] = pd.to_numeric(editable["Costo x ml"], errors="coerce").fillna(0.0)
             editable["Total"] = (editable["Mililitros"] * editable["Costo x ml"]).round(2)
 
             edited = st.data_editor(
@@ -367,26 +415,30 @@ with tab2:
                 nuevo_estatus = st.selectbox("Cambiar estatus", ESTATUS_LIST,
                                              index=ESTATUS_LIST.index(estatus_actual) if estatus_actual in ESTATUS_LIST else 0)
             with colb2:
-                apply_changes = st.button("💾 Guardar cambios")
+                apply_changes = st.button("💾 Guardar cambios", key=f"save_{pedido_sel}")
             with colb3:
-                gen_pdf = st.button("📄 Generar PDF")
+                gen_pdf = st.button("📄 Generar PDF", key=f"pdf_{pedido_sel}")
             with colb4:
-                dup = st.button("🧬 Duplicar pedido")
+                dup = st.button("🧬 Duplicar pedido", key=f"dup_{pedido_sel}")
 
             if apply_changes:
-                prod_df = load_productos_df()
                 cambios = edited.merge(pedido_rows[["Producto","Mililitros"]], on="Producto", how="left", suffixes=("_new","_old"))
                 modificaciones = []
+                prod_df = load_productos_df()
                 for _, r in cambios.iterrows():
-                    ml_old = float(r["Mililitros_old"]); ml_new = float(r["Mililitros_new"])
+                    ml_old = float(r["Mililitros_old"])
+                    ml_new = float(r["Mililitros_new"])
                     if ml_new != ml_old:
                         diff = ml_new - ml_old
-                        idxp = prod_df.index[prod_df["Producto"]==r["Producto"]][0]
-                        stock_disp = float(prod_df.at[idxp, "Stock disponible"])
-                        if diff > 0 and diff > stock_disp:
-                            st.error(f"Stock insuficiente para '{r['Producto']}'. Disponible: {stock_disp:g} ml")
-                            st.stop()
-                        prod_df.at[idxp, "Stock disponible"] = stock_disp - diff
+                        idxp = _get_product_row_idx(prod_df, r["Producto"])
+                        if idxp is None:
+                            st.warning(f"⚠️ '{r['Producto']}' no existe en 'Productos'. No se ajustó stock.")
+                        else:
+                            stock_disp = _get_stock(prod_df, idxp)
+                            if diff > 0 and diff > stock_disp:
+                                st.error(f"Stock insuficiente para '{r['Producto']}'. Disponible: {stock_disp:g} ml")
+                                st.stop()
+                            _set_stock(prod_df, idxp, stock_disp - diff)
                         modificaciones.append((r["Producto"], ml_new))
 
                 pedidos_all = load_pedidos_df()
@@ -403,22 +455,20 @@ with tab2:
                 st.experimental_rerun()
 
             if gen_pdf:
-                pedidos_all = load_pedidos_df()
-                productos_pdf = pedidos_all[pedidos_all["# Pedido"] == pedido_sel][["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
-                fecha_pdf = pedidos_all[pedidos_all["# Pedido"] == pedido_sel]["Fecha"].iloc[0]
-                estatus_pdf = pedidos_all[pedidos_all["# Pedido"] == pedido_sel]["Estatus"].iloc[-1]
+                productos_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel][["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
+                fecha_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Fecha"].iloc[0]
+                estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Estatus"].iloc[-1]
                 pdf_bytes = generar_pdf(pedido_sel, cliente_sel, fecha_pdf, estatus_pdf, productos_pdf)
-                st.download_button("📥 Descargar PDF", pdf_bytes,
-                                   file_name=f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf",
-                                   mime="application/pdf")
+                filename_hist = f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf"
+                st.markdown(link_descarga_pdf(pdf_bytes, filename_hist), unsafe_allow_html=True)
 
             if dup:
-                base = pedido_rows.copy()
-                new_id = next_pedido_id(load_pedidos_df())
+                base = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
+                new_id = int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
                 base["# Pedido"] = new_id
                 base["Fecha"] = datetime.today().strftime("%Y-%m-%d")
                 base["Estatus"] = "Cotizacion"
-                pedidos_df2 = pd.concat([load_pedidos_df(), base], ignore_index=True)
+                pedidos_df2 = pd.concat([pedidos_df, base], ignore_index=True)
                 save_pedidos_df(pedidos_df2)
                 st.success(f"Pedido #{new_id} duplicado.")
                 st.experimental_rerun()
@@ -439,11 +489,11 @@ with tab3:
         with cpc:
             stock_ini = st.number_input("Stock disponible (ml)", min_value=0.0, step=1.0, key="np_stock")
         if st.button("Agregar", key="np_add"):
-            if not nombre_producto.strip() or costo_ml <= 0:
+            if not nombre_producto or not nombre_producto.strip() or costo_ml <= 0:
                 st.error("Complete nombre y costo (>0).")
             else:
-                productos_df = load_productos_df()
-                if nombre_producto.strip() in productos_df["Producto"].values:
+                productos_df_local = load_productos_df()
+                if not productos_df_local.empty and nombre_producto.strip() in productos_df_local["Producto"].values:
                     st.warning("Ese producto ya existe.")
                 else:
                     nuevo = pd.DataFrame([{
@@ -451,28 +501,31 @@ with tab3:
                         "Costo x ml": float(costo_ml),
                         "Stock disponible": float(stock_ini)
                     }])
-                    productos_df2 = pd.concat([productos_df, nuevo], ignore_index=True)
+                    productos_df2 = pd.concat([productos_df_local, nuevo], ignore_index=True)
                     save_productos_df(productos_df2)
                     st.success("Producto agregado.")
                     st.experimental_rerun()
 
     st.markdown("### 🗂️ Lista de productos")
-    editable_prod = load_productos_df().copy()
-    edited_prod = st.data_editor(
-        editable_prod,
-        use_container_width=True,
-        num_rows="dynamic",
-        key="prod_editor"
-    )
-    if st.button("💾 Guardar cambios de productos"):
-        if edited_prod["Costo x ml"].lt(0).any() or edited_prod["Stock disponible"].lt(0).any():
-            st.error("Costo y stock deben ser >= 0.")
-        else:
-            save_productos_df(edited_prod)
-            st.success("Cambios guardados.")
-            st.experimental_rerun()
+    productos_df_local = load_productos_df().copy()
+    if productos_df_local.empty:
+        st.info("Aún no hay productos en la hoja **Productos**. Agrega el primero arriba.")
+    else:
+        edited_prod = st.data_editor(
+            productos_df_local,
+            use_container_width=True,
+            num_rows="dynamic",
+            key="prod_editor"
+        )
+        if st.button("💾 Guardar cambios de productos"):
+            if edited_prod["Costo x ml"].lt(0).any() or edited_prod["Stock disponible"].lt(0).any():
+                st.error("Costo y stock deben ser >= 0.")
+            else:
+                save_productos_df(edited_prod)
+                st.success("Cambios guardados.")
+                st.experimental_rerun()
 
 # =====================
 # FOOTER
 # =====================
-st.caption("v3 — Flujo de pedidos con PDF y leyenda de pago incluida.")
+st.caption("v7 — PDF Latin-1 safe, descarga directa, historial editable y stock robusto.")
