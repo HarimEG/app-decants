@@ -1,9 +1,9 @@
-# app.py — H DECANTS (v8: PDF Latin-1 blindado + descarga directa)
-# ===============================================================
+# app.py — H DECANTS (v9: Compras + PDF Latin-1 + descarga directa)
+# ================================================================
 
 import os
 import base64
-from datetime import datetime
+from datetime import datetime, date
 from typing import List, Tuple
 
 import streamlit as st
@@ -25,8 +25,17 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1bjV4EaDNNbJfN4huzbNpTFmj-vf
 SHEET_TAB_PRODUCTOS = "Productos"
 SHEET_TAB_PEDIDOS   = "Pedidos"
 SHEET_TAB_ENVIOS    = "Envios"
+SHEET_TAB_COMPRAS   = "Compras"   # NUEVO
 
 ESTATUS_LIST = ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"]
+
+# Catálogos para Compras
+COMPRAS_STATUS = ["Pedido", "Recibido", "Cancelado"]
+COMPRAS_PAGO_STATUS = ["Pendiente", "Pagado", "Parcial"]
+COMPRAS_DE_QUIEN = ["Ahinoan", "Harim", "A&H"]
+
+MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
+            "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
 # =====================
 # CABECERA
@@ -46,9 +55,19 @@ def get_client_and_ws():
     productos_ws = sheet.worksheet(SHEET_TAB_PRODUCTOS)
     pedidos_ws = sheet.worksheet(SHEET_TAB_PEDIDOS)
     envios_ws = sheet.worksheet(SHEET_TAB_ENVIOS)
-    return client, sheet, productos_ws, pedidos_ws, envios_ws
+    # NUEVO: hoja Compras (debe existir en el Google Sheet)
+    try:
+        compras_ws = sheet.worksheet(SHEET_TAB_COMPRAS)
+    except Exception:
+        # Si no existe, la crea con encabezados
+        compras_ws = sheet.add_worksheet(title=SHEET_TAB_COMPRAS, rows=1000, cols=10)
+        compras_ws.update([[
+            "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
+            "De quien","Status de Pago","Decants Vendedor"
+        ]])
+    return client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws
 
-client, sheet, productos_ws, pedidos_ws, envios_ws = get_client_and_ws()
+client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws = get_client_and_ws()
 
 # =====================
 # HELPERS (Latin-1 / descarga)
@@ -101,6 +120,26 @@ def load_pedidos_df() -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
     return df
 
+@st.cache_data(ttl=60, show_spinner=False)
+def load_compras_df() -> pd.DataFrame:
+    df = pd.DataFrame(compras_ws.get_all_records())
+    if df.empty:
+        return pd.DataFrame(columns=[
+            "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
+            "De quien","Status de Pago","Decants Vendedor"
+        ])
+    # Normaliza tipos
+    if "Pzs" in df:
+        df["Pzs"] = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
+    if "Costo" in df:
+        df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0.0)
+    if "Fecha" in df:
+        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
+    for col in ["Mes","Año","Status","De quien","Status de Pago","Decants Vendedor","Producto"]:
+        if col in df:
+            df[col] = df[col].astype(str)
+    return df
+
 def save_productos_df(df: pd.DataFrame):
     productos_ws.clear()
     productos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
@@ -110,6 +149,11 @@ def save_pedidos_df(df: pd.DataFrame):
     pedidos_ws.clear()
     pedidos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
     load_pedidos_df.clear()
+
+def save_compras_df(df: pd.DataFrame):
+    compras_ws.clear()
+    compras_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
+    load_compras_df.clear()
 
 def append_envio_row(data: List):
     envios_ws.append_row(data)
@@ -236,12 +280,15 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
 # =====================
 productos_df = load_productos_df()
 pedidos_df = load_pedidos_df()
+compras_df = load_compras_df()  # NUEVO
 pedido_id = next_pedido_id(pedidos_df)
 
 # =====================
 # TABS
 # =====================
-tab1, tab2, tab3 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Productos"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "➕ Nuevo Pedido", "📋 Historial", "🧪 Productos", "🛒 Compras"  # NUEVO
+])
 
 # =====================
 # TAB 1: NUEVO PEDIDO
@@ -548,6 +595,133 @@ with tab3:
                 st.experimental_rerun()
 
 # =====================
+# TAB 4: COMPRAS (NUEVA)
+# =====================
+with tab4:
+    st.subheader("🛒 Registro de Compras")
+    st.caption("Llena los campos y guarda. Si marcas **Decants Vendedor = Sí**, podrás agregar o sumar stock en Productos.")
+
+    with st.form("form_compras", clear_on_submit=False):
+        c1, c2, c3 = st.columns([2,1,1])
+        with c1:
+            c_prod = st.text_input("Producto", placeholder="Nombre del perfume")
+        with c2:
+            c_pzs = st.number_input("Pzs", min_value=0, step=1, value=0)
+        with c3:
+            c_costo = st.number_input("Costo (total)", min_value=0.0, step=1.0, value=0.0)
+
+        c4, c5, c6 = st.columns([1,1,1.2])
+        with c4:
+            c_status = st.selectbox("Status", COMPRAS_STATUS, index=0)
+        with c5:
+            c_fecha = st.date_input("Fecha", value=datetime.today().date())
+        with c6:
+            c_de_quien = st.selectbox("De quien", COMPRAS_DE_QUIEN, index=1)  # Harim por defecto
+
+        c7, c8 = st.columns([1.2,1])
+        with c7:
+            c_pago = st.selectbox("Status de Pago", COMPRAS_PAGO_STATUS, index=0)
+        with c8:
+            c_decants = st.selectbox("Decants Vendedor", ["No","Sí"], index=0)
+
+        # Campos extra si Decants = Sí
+        extra = {}
+        if c_decants == "Sí":
+            st.markdown("#### ➕ Alta/Suma en Productos")
+            e1, e2, e3 = st.columns([1.2,1.2,1])
+            with e1:
+                extra["costo_ml"] = st.number_input("Costo por ml", min_value=0.0, step=0.1, value=0.0, key="costo_ml_dec")
+            with e2:
+                extra["stock_ml"] = st.number_input("Stock inicial / a sumar (ml)", min_value=0.0, step=1.0, value=0.0, key="stock_ml_dec")
+            with e3:
+                extra["sumar_si_existe"] = st.checkbox("Sumar si existe", value=True)
+
+        guardar_compra = st.form_submit_button("💾 Guardar compra", type="primary")
+
+    if guardar_compra:
+        # Validaciones mínimas
+        if not c_prod.strip():
+            st.error("Indica el nombre del producto.")
+        else:
+            # Calcular Mes y Año desde la fecha
+            _mes_idx = (c_fecha.month - 1) if isinstance(c_fecha, date) else datetime.today().month - 1
+            c_mes = MESES_ES[_mes_idx]
+            c_anio = (c_fecha.year if isinstance(c_fecha, date) else datetime.today().year)
+
+            # Construir df de compras y guardar
+            compras_df_local = load_compras_df()
+            nueva_fila = pd.DataFrame([{
+                "Producto": c_prod.strip(),
+                "Pzs": int(c_pzs or 0),
+                "Costo": float(c_costo or 0.0),
+                "Status": c_status,
+                "Mes": c_mes,
+                "Fecha": c_fecha.strftime("%Y-%m-%d") if isinstance(c_fecha, date) else str(c_fecha),
+                "Año": str(c_anio),
+                "De quien": c_de_quien,
+                "Status de Pago": c_pago,
+                "Decants Vendedor": c_decants,
+            }])
+            compras_df2 = pd.concat([compras_df_local, nueva_fila], ignore_index=True)
+            save_compras_df(compras_df2)
+
+            # Alta/suma en Productos si aplica
+            if c_decants == "Sí":
+                costo_ml = float(extra.get("costo_ml") or 0.0)
+                stock_ml = float(extra.get("stock_ml") or 0.0)
+                sumar = bool(extra.get("sumar_si_existe"))
+
+                if costo_ml <= 0 or stock_ml < 0:
+                    st.warning("Para Decants, indique Costo por ml (>0) y Stock (>=0).")
+                else:
+                    prod_df = load_productos_df()
+                    idx = _get_product_row_idx(prod_df, c_prod.strip())
+                    if idx is None:
+                        # Crear producto nuevo
+                        nuevo = pd.DataFrame([{
+                            "Producto": c_prod.strip(),
+                            "Costo x ml": costo_ml,
+                            "Stock disponible": stock_ml
+                        }])
+                        prod_df2 = pd.concat([prod_df, nuevo], ignore_index=True)
+                        save_productos_df(prod_df2)
+                        st.success(f"Producto '{c_prod.strip()}' agregado a **Productos**.")
+                    else:
+                        if sumar:
+                            stock_disp = _get_stock(prod_df, idx)
+                            _set_stock(prod_df, idx, stock_disp + stock_ml)
+                            # Actualiza costo/ml si mandaste uno > 0 (opcional)
+                            if costo_ml > 0:
+                                prod_df.at[idx, "Costo x ml"] = float(costo_ml)
+                            save_productos_df(prod_df)
+                            st.success(f"Stock de '{c_prod.strip()}' actualizado (+{stock_ml:g} ml).")
+                        else:
+                            st.info(f"El producto '{c_prod.strip()}' ya existe. No se sumó stock (marca 'Sumar si existe').")
+
+            st.success("Compra guardada correctamente ✅")
+
+    # Listado de compras con filtros
+    st.markdown("### 📒 Historial de Compras")
+    colf1, colf2, colf3 = st.columns([1.2,1,1])
+    with colf1:
+        filtro_mes = st.selectbox("Mes", ["Todos"] + MESES_ES, index=0)
+    with colf2:
+        filtro_anio = st.text_input("Año", value=str(datetime.today().year))
+    with colf3:
+        filtro_status = st.selectbox("Status", ["Todos"] + COMPRAS_STATUS, index=0)
+
+    dfc = load_compras_df().copy()
+    if not dfc.empty:
+        if filtro_mes != "Todos":
+            dfc = dfc[dfc["Mes"] == filtro_mes]
+        if filtro_anio.strip():
+            dfc = dfc[dfc["Año"].astype(str) == filtro_anio.strip()]
+        if filtro_status != "Todos":
+            dfc = dfc[dfc["Status"] == filtro_status]
+
+    st.dataframe(dfc, use_container_width=True, height=420)
+
+# =====================
 # FOOTER
 # =====================
-st.caption("v8 — PDF Latin-1 blindado, descarga directa, historial editable y stock robusto.")
+st.caption("v9 — +Compras conectadas a Sheets, alta/suma automática a Productos, PDF Latin‑1 y descarga directa.")
