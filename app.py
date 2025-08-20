@@ -1,5 +1,5 @@
-# app.py — H DECANTS (v10: Compras con Decants/Vendedor separados + PDF Latin-1 + descarga directa)
-# ================================================================================================
+# app.py — H DECANTS (v12: Compras robusto + append + PDF Latin-1)
+# ================================================================
 
 import os
 import base64
@@ -37,6 +37,11 @@ COMPRAS_DE_QUIEN = ["Ahinoan", "Harim", "A&H"]
 MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
             "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
+COMPRAS_HEADERS = [
+    "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
+    "De quien","Status de Pago","Decants","Vendedor"
+]
+
 # =====================
 # CABECERA
 # =====================
@@ -44,7 +49,7 @@ st.image(LOGO_URL, width=140)
 st.title("H DECANTS — Gestión de Pedidos")
 
 # =====================
-# CLIENTE GSHEETS
+# CLIENTE GSHEETS (crea/normaliza hoja Compras)
 # =====================
 @st.cache_resource(show_spinner=False)
 def get_client_and_ws():
@@ -52,18 +57,25 @@ def get_client_and_ws():
     creds = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"], scopes=scope)
     client = gspread.authorize(creds)
     sheet = client.open_by_url(SHEET_URL)
+
     productos_ws = sheet.worksheet(SHEET_TAB_PRODUCTOS)
-    pedidos_ws = sheet.worksheet(SHEET_TAB_PEDIDOS)
-    envios_ws = sheet.worksheet(SHEET_TAB_ENVIOS)
-    # Hoja Compras (crea si no existe con encabezados correctos)
+    pedidos_ws   = sheet.worksheet(SHEET_TAB_PEDIDOS)
+    envios_ws    = sheet.worksheet(SHEET_TAB_ENVIOS)
+
+    # Compras: crear o normalizar encabezados
     try:
         compras_ws = sheet.worksheet(SHEET_TAB_COMPRAS)
     except Exception:
-        compras_ws = sheet.add_worksheet(title=SHEET_TAB_COMPRAS, rows=1000, cols=11)
-        compras_ws.update([[
-            "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
-            "De quien","Status de Pago","Decants","Vendedor"
-        ]])
+        compras_ws = sheet.add_worksheet(title=SHEET_TAB_COMPRAS, rows=1000, cols=len(COMPRAS_HEADERS))
+        compras_ws.update([COMPRAS_HEADERS])
+    else:
+        try:
+            vals = compras_ws.get_all_values()
+        except Exception:
+            vals = []
+        if (not vals) or (len(vals) >= 1 and all((c or "").strip() == "" for c in vals[0])):
+            compras_ws.update([COMPRAS_HEADERS])
+
     return client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws
 
 client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws = get_client_and_ws()
@@ -72,7 +84,7 @@ client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws = get_client_and_
 # HELPERS (Latin-1 / descarga)
 # =====================
 def _latin1(s) -> str:
-    """Convierte a Latin-1 eliminando lo que no se pueda representar (emojis, comillas curvas, ™, etc.)."""
+    """Convierte a Latin-1 eliminando lo que no se pueda representar."""
     if s is None:
         return ""
     if not isinstance(s, str):
@@ -121,34 +133,46 @@ def load_pedidos_df() -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_compras_df() -> pd.DataFrame:
-    # Carga robusta (no truena si hoja vacía)
+    """Carga robusta de Compras sin reventar si la hoja está vacía."""
     try:
-        raw = compras_ws.get_all_records()
-        df = pd.DataFrame(raw)
+        values = compras_ws.get_all_values()  # filas crudas
     except Exception:
-        df = pd.DataFrame()
+        values = []
 
-    expected_cols = [
-        "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
-        "De quien","Status de Pago","Decants","Vendedor"
-    ]
-    if df.empty:
-        return pd.DataFrame(columns=expected_cols)
+    if not values:
+        return pd.DataFrame(columns=COMPRAS_HEADERS)
 
-    # Asegura todas las columnas
-    for c in expected_cols:
+    headers = values[0]
+    rows    = values[1:] if len(values) > 1 else []
+
+    # si headers están vacíos → devolver DF vacío con columnas esperadas
+    if not headers or all((h or "").strip() == "" for h in headers):
+        return pd.DataFrame(columns=COMPRAS_HEADERS)
+
+    # normaliza ancho de filas a la cantidad de headers
+    width = len(headers)
+    norm_rows = [(r + [""]*(width-len(r)))[:width] for r in rows]
+
+    df = pd.DataFrame(norm_rows, columns=headers)
+
+    # asegura todas las columnas esperadas
+    for c in COMPRAS_HEADERS:
         if c not in df.columns:
             df[c] = ""
 
-    # Normaliza tipos
+    # tipos
     df["Producto"] = df["Producto"].astype(str)
-    df["Pzs"] = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
+    df["Pzs"]   = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
     df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0.0)
-    df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
+
+    # Fecha uniforme YYYY-MM-DD si se puede
+    _fecha = pd.to_datetime(df["Fecha"], errors="coerce")
+    df["Fecha"] = _fecha.dt.strftime("%Y-%m-%d").fillna(df["Fecha"])
+
     for c in ["Mes","Año","Status","De quien","Status de Pago","Decants","Vendedor"]:
         df[c] = df[c].astype(str)
 
-    return df[expected_cols]
+    return df[COMPRAS_HEADERS]
 
 def save_productos_df(df: pd.DataFrame):
     productos_ws.clear()
@@ -160,17 +184,22 @@ def save_pedidos_df(df: pd.DataFrame):
     pedidos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
     load_pedidos_df.clear()
 
-def save_compras_df(df: pd.DataFrame):
-    cols = [
-        "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
-        "De quien","Status de Pago","Decants","Vendedor"
+def append_compra_row(row: dict):
+    """Agrega una fila a Compras sin borrar nada (append seguro)."""
+    values = [
+        row.get("Producto",""),
+        int(row.get("Pzs",0) or 0),
+        float(row.get("Costo",0.0) or 0.0),
+        row.get("Status",""),
+        row.get("Mes",""),
+        row.get("Fecha",""),
+        row.get("Año",""),
+        row.get("De quien",""),
+        row.get("Status de Pago",""),
+        row.get("Decants",""),
+        row.get("Vendedor",""),
     ]
-    for c in cols:
-        if c not in df.columns:
-            df[c] = ""
-    df = df[cols]
-    compras_ws.clear()
-    compras_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
+    compras_ws.append_row(values, value_input_option="USER_ENTERED")
     load_compras_df.clear()
 
 def append_envio_row(data: List):
@@ -273,7 +302,7 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     pdf.cell(35,  9, _latin1(_fmt_money(total_general)), 1, 1, "R")
     pdf.ln(6)
 
-    # Leyenda (sin emojis)
+    # Leyenda (sin emojis para Latin-1)
     pdf.set_draw_color(210, 210, 210)
     x1, y1 = 10, pdf.get_y()
     pdf.line(x1, y1, 200, y1)
@@ -289,7 +318,6 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     )
     pdf.multi_cell(0, 6, _latin1(leyenda))
 
-    # Exportar (si FPDF devuelve str en vez de bytes, fuerza latin-1)
     raw = pdf.output(dest="S")
     return raw if isinstance(raw, bytes) else raw.encode("latin-1", "ignore")
 
@@ -312,7 +340,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # TAB 1: NUEVO PEDIDO
 # =====================
 with tab1:
-    # Reset de carrito si venimos de limpiar
     if st.session_state.get("nueva_sesion", False):
         st.session_state.pedido_items = []
         st.session_state.nueva_sesion = False
@@ -336,7 +363,6 @@ with tab1:
                 opts_list = opciones.tolist()
             else:
                 opts_list = []
-            # multiselect para móvil (lo usamos como select de 1)
             prod_pick = st.multiselect("Producto", options=opts_list, default=opts_list[:1], key="picker_producto")
             prod_sel = prod_pick[0] if prod_pick else "—"
 
@@ -378,7 +404,6 @@ with tab1:
         else:
             st.info("El carrito está vacío. Agrega al menos un producto.")
 
-        # Envío
         requiere_envio = st.checkbox("¿Requiere envío?")
         datos_envio = []
         if requiere_envio:
@@ -396,14 +421,13 @@ with tab1:
         submitted = st.form_submit_button("💾 Guardar Pedido", type="primary")
 
     if submitted:
-        cart_items = list(st.session_state.pedido_items)  # Copia antes de tocar estado
+        cart_items = list(st.session_state.pedido_items)
 
         if not cliente or not cliente.strip():
             st.error("Ingrese el nombre del cliente.")
         elif not cart_items:
             st.error("El carrito está vacío. Agregue al menos un producto.")
         else:
-            # Guardar filas en 'Pedidos' y ajustar stock
             nuevas_filas = []
             for prod, ml_val, costo_val, total_val in cart_items:
                 nuevas_filas.append({
@@ -426,7 +450,6 @@ with tab1:
             save_pedidos_df(pedidos_df_new)
             save_productos_df(productos_df)
 
-            # Guardar envío
             if requiere_envio and datos_envio:
                 datos_envio[0] = pedido_id
                 datos_envio[1] = cliente.strip()
@@ -434,12 +457,10 @@ with tab1:
 
             st.success(f"Pedido #{pedido_id} guardado.")
 
-            # PDF (descarga directa sin abrir)
             pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, cart_items)
             filename = f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf"
             st.markdown(link_descarga_pdf(pdf_bytes, filename), unsafe_allow_html=True)
 
-            # Botón para limpiar y preparar nueva sesión
             if st.button("🧹 Finalizar y limpiar"):
                 st.session_state.pedido_items = []
                 st.session_state.nueva_sesion = True
@@ -483,7 +504,6 @@ with tab2:
             st.markdown(f"### Pedido #{pedido_sel} — {cliente_sel}")
             st.write(f"Estatus actual: **{estatus_actual}**")
 
-            # Editor (ML editable)
             editable = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].copy()
             editable["Mililitros"] = pd.to_numeric(editable["Mililitros"], errors="coerce").fillna(0.0)
             editable["Costo x ml"] = pd.to_numeric(editable["Costo x ml"], errors="coerce").fillna(0.0)
@@ -644,7 +664,6 @@ with tab4:
         with c9:
             c_vendedor = st.text_input("Vendedor", placeholder="Nombre/alias")  # columna Vendedor
 
-        # Campos extra si Decants = Sí (alta/suma en Productos)
         extra = {}
         if c_decants == "Sí":
             st.markdown("#### ➕ Alta/Suma en Productos")
@@ -662,13 +681,12 @@ with tab4:
         if not c_prod.strip():
             st.error("Indica el nombre del producto.")
         else:
-            # Mes / Año desde la fecha
-            _mes_idx = (c_fecha.month - 1)
+            _mes_idx = c_fecha.month - 1
             c_mes = MESES_ES[_mes_idx]
             c_anio = c_fecha.year
 
-            compras_df_local = load_compras_df()
-            nueva_fila = pd.DataFrame([{
+            # APPEND seguro (no borra hoja)
+            nueva = {
                 "Producto": c_prod.strip(),
                 "Pzs": int(c_pzs or 0),
                 "Costo": float(c_costo or 0.0),
@@ -678,25 +696,22 @@ with tab4:
                 "Año": str(c_anio),
                 "De quien": c_de_quien,
                 "Status de Pago": c_pago,
-                "Decants": c_decants,                 # separado
-                "Vendedor": c_vendedor.strip(),       # separado
-            }])
-            compras_df2 = pd.concat([compras_df_local, nueva_fila], ignore_index=True)
-            save_compras_df(compras_df2)
+                "Decants": c_decants,
+                "Vendedor": (c_vendedor or "").strip(),
+            }
+            append_compra_row(nueva)
 
             # Alta/suma en Productos si aplica
             if c_decants == "Sí":
                 costo_ml = float(extra.get("costo_ml") or 0.0)
                 stock_ml = float(extra.get("stock_ml") or 0.0)
                 sumar = bool(extra.get("sumar_si_existe"))
-
                 if costo_ml <= 0 or stock_ml < 0:
                     st.warning("Para Decants, indique Costo por ml (>0) y Stock (>=0).")
                 else:
                     prod_df = load_productos_df()
                     idx = _get_product_row_idx(prod_df, c_prod.strip())
                     if idx is None:
-                        # Crear producto nuevo
                         nuevo = pd.DataFrame([{
                             "Producto": c_prod.strip(),
                             "Costo x ml": costo_ml,
@@ -718,7 +733,7 @@ with tab4:
 
             st.success("Compra guardada correctamente ✅")
 
-    # Listado de compras con filtros
+    # Listado de Compras con filtros
     st.markdown("### 📒 Historial de Compras")
     colf1, colf2, colf3 = st.columns([1.2,1,1])
     with colf1:
@@ -727,7 +742,6 @@ with tab4:
         filtro_anio = st.text_input("Año", value=str(datetime.today().year))
     with colf3:
         filtro_status = st.selectbox("Status", ["Todos"] + COMPRAS_STATUS, index=0)
-
     colf4, colf5 = st.columns([1,1])
     with colf4:
         filtro_decants = st.selectbox("Decants", ["Todos","Sí","No"], index=0)
@@ -752,4 +766,4 @@ with tab4:
 # =====================
 # FOOTER
 # =====================
-st.caption("v10 — Compras (Decants y Vendedor separados), alta/suma a Productos, PDF Latin‑1 y descarga directa.")
+st.caption("v12 — Compras robusto (headers + get_all_values), append sin borrar y PDF Latin‑1 con descarga directa.")
