@@ -1,5 +1,5 @@
-# app.py — H DECANTS (v9: Compras + PDF Latin-1 + descarga directa)
-# ================================================================
+# app.py — H DECANTS (v10: Compras con Decants/Vendedor separados + PDF Latin-1 + descarga directa)
+# ================================================================================================
 
 import os
 import base64
@@ -55,15 +55,14 @@ def get_client_and_ws():
     productos_ws = sheet.worksheet(SHEET_TAB_PRODUCTOS)
     pedidos_ws = sheet.worksheet(SHEET_TAB_PEDIDOS)
     envios_ws = sheet.worksheet(SHEET_TAB_ENVIOS)
-    # NUEVO: hoja Compras (debe existir en el Google Sheet)
+    # Hoja Compras (crea si no existe con encabezados correctos)
     try:
         compras_ws = sheet.worksheet(SHEET_TAB_COMPRAS)
     except Exception:
-        # Si no existe, la crea con encabezados
-        compras_ws = sheet.add_worksheet(title=SHEET_TAB_COMPRAS, rows=1000, cols=10)
+        compras_ws = sheet.add_worksheet(title=SHEET_TAB_COMPRAS, rows=1000, cols=11)
         compras_ws.update([[
             "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
-            "De quien","Status de Pago","Decants Vendedor"
+            "De quien","Status de Pago","Decants","Vendedor"
         ]])
     return client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws
 
@@ -122,23 +121,34 @@ def load_pedidos_df() -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_compras_df() -> pd.DataFrame:
-    df = pd.DataFrame(compras_ws.get_all_records())
+    # Carga robusta (no truena si hoja vacía)
+    try:
+        raw = compras_ws.get_all_records()
+        df = pd.DataFrame(raw)
+    except Exception:
+        df = pd.DataFrame()
+
+    expected_cols = [
+        "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
+        "De quien","Status de Pago","Decants","Vendedor"
+    ]
     if df.empty:
-        return pd.DataFrame(columns=[
-            "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
-            "De quien","Status de Pago","Decants Vendedor"
-        ])
+        return pd.DataFrame(columns=expected_cols)
+
+    # Asegura todas las columnas
+    for c in expected_cols:
+        if c not in df.columns:
+            df[c] = ""
+
     # Normaliza tipos
-    if "Pzs" in df:
-        df["Pzs"] = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
-    if "Costo" in df:
-        df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0.0)
-    if "Fecha" in df:
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
-    for col in ["Mes","Año","Status","De quien","Status de Pago","Decants Vendedor","Producto"]:
-        if col in df:
-            df[col] = df[col].astype(str)
-    return df
+    df["Producto"] = df["Producto"].astype(str)
+    df["Pzs"] = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
+    df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0.0)
+    df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
+    for c in ["Mes","Año","Status","De quien","Status de Pago","Decants","Vendedor"]:
+        df[c] = df[c].astype(str)
+
+    return df[expected_cols]
 
 def save_productos_df(df: pd.DataFrame):
     productos_ws.clear()
@@ -151,6 +161,14 @@ def save_pedidos_df(df: pd.DataFrame):
     load_pedidos_df.clear()
 
 def save_compras_df(df: pd.DataFrame):
+    cols = [
+        "Producto","Pzs","Costo","Status","Mes","Fecha","Año",
+        "De quien","Status de Pago","Decants","Vendedor"
+    ]
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    df = df[cols]
     compras_ws.clear()
     compras_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
     load_compras_df.clear()
@@ -280,14 +298,14 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
 # =====================
 productos_df = load_productos_df()
 pedidos_df = load_pedidos_df()
-compras_df = load_compras_df()  # NUEVO
+compras_df = load_compras_df()
 pedido_id = next_pedido_id(pedidos_df)
 
 # =====================
 # TABS
 # =====================
 tab1, tab2, tab3, tab4 = st.tabs([
-    "➕ Nuevo Pedido", "📋 Historial", "🧪 Productos", "🛒 Compras"  # NUEVO
+    "➕ Nuevo Pedido", "📋 Historial", "🧪 Productos", "🛒 Compras"
 ])
 
 # =====================
@@ -595,11 +613,11 @@ with tab3:
                 st.experimental_rerun()
 
 # =====================
-# TAB 4: COMPRAS (NUEVA)
+# TAB 4: COMPRAS (Decants + Vendedor)
 # =====================
 with tab4:
     st.subheader("🛒 Registro de Compras")
-    st.caption("Llena los campos y guarda. Si marcas **Decants Vendedor = Sí**, podrás agregar o sumar stock en Productos.")
+    st.caption("Llena los campos y guarda. Si marcas **Decants = Sí**, podrás agregar o sumar stock en Productos.")
 
     with st.form("form_compras", clear_on_submit=False):
         c1, c2, c3 = st.columns([2,1,1])
@@ -618,13 +636,15 @@ with tab4:
         with c6:
             c_de_quien = st.selectbox("De quien", COMPRAS_DE_QUIEN, index=1)  # Harim por defecto
 
-        c7, c8 = st.columns([1.2,1])
+        c7, c8, c9 = st.columns([1.2,1,1.2])
         with c7:
             c_pago = st.selectbox("Status de Pago", COMPRAS_PAGO_STATUS, index=0)
         with c8:
-            c_decants = st.selectbox("Decants Vendedor", ["No","Sí"], index=0)
+            c_decants = st.selectbox("Decants", ["No","Sí"], index=0)  # columna Decants
+        with c9:
+            c_vendedor = st.text_input("Vendedor", placeholder="Nombre/alias")  # columna Vendedor
 
-        # Campos extra si Decants = Sí
+        # Campos extra si Decants = Sí (alta/suma en Productos)
         extra = {}
         if c_decants == "Sí":
             st.markdown("#### ➕ Alta/Suma en Productos")
@@ -639,16 +659,14 @@ with tab4:
         guardar_compra = st.form_submit_button("💾 Guardar compra", type="primary")
 
     if guardar_compra:
-        # Validaciones mínimas
         if not c_prod.strip():
             st.error("Indica el nombre del producto.")
         else:
-            # Calcular Mes y Año desde la fecha
-            _mes_idx = (c_fecha.month - 1) if isinstance(c_fecha, date) else datetime.today().month - 1
+            # Mes / Año desde la fecha
+            _mes_idx = (c_fecha.month - 1)
             c_mes = MESES_ES[_mes_idx]
-            c_anio = (c_fecha.year if isinstance(c_fecha, date) else datetime.today().year)
+            c_anio = c_fecha.year
 
-            # Construir df de compras y guardar
             compras_df_local = load_compras_df()
             nueva_fila = pd.DataFrame([{
                 "Producto": c_prod.strip(),
@@ -656,11 +674,12 @@ with tab4:
                 "Costo": float(c_costo or 0.0),
                 "Status": c_status,
                 "Mes": c_mes,
-                "Fecha": c_fecha.strftime("%Y-%m-%d") if isinstance(c_fecha, date) else str(c_fecha),
+                "Fecha": c_fecha.strftime("%Y-%m-%d"),
                 "Año": str(c_anio),
                 "De quien": c_de_quien,
                 "Status de Pago": c_pago,
-                "Decants Vendedor": c_decants,
+                "Decants": c_decants,                 # separado
+                "Vendedor": c_vendedor.strip(),       # separado
             }])
             compras_df2 = pd.concat([compras_df_local, nueva_fila], ignore_index=True)
             save_compras_df(compras_df2)
@@ -687,10 +706,9 @@ with tab4:
                         save_productos_df(prod_df2)
                         st.success(f"Producto '{c_prod.strip()}' agregado a **Productos**.")
                     else:
+                        stock_disp = _get_stock(prod_df, idx)
                         if sumar:
-                            stock_disp = _get_stock(prod_df, idx)
                             _set_stock(prod_df, idx, stock_disp + stock_ml)
-                            # Actualiza costo/ml si mandaste uno > 0 (opcional)
                             if costo_ml > 0:
                                 prod_df.at[idx, "Costo x ml"] = float(costo_ml)
                             save_productos_df(prod_df)
@@ -710,6 +728,12 @@ with tab4:
     with colf3:
         filtro_status = st.selectbox("Status", ["Todos"] + COMPRAS_STATUS, index=0)
 
+    colf4, colf5 = st.columns([1,1])
+    with colf4:
+        filtro_decants = st.selectbox("Decants", ["Todos","Sí","No"], index=0)
+    with colf5:
+        filtro_vendedor = st.text_input("Vendedor contiene", value="")
+
     dfc = load_compras_df().copy()
     if not dfc.empty:
         if filtro_mes != "Todos":
@@ -718,10 +742,14 @@ with tab4:
             dfc = dfc[dfc["Año"].astype(str) == filtro_anio.strip()]
         if filtro_status != "Todos":
             dfc = dfc[dfc["Status"] == filtro_status]
+        if filtro_decants != "Todos":
+            dfc = dfc[dfc["Decants"] == filtro_decants]
+        if filtro_vendedor.strip():
+            dfc = dfc[dfc["Vendedor"].str.contains(filtro_vendedor.strip(), case=False, na=False)]
 
     st.dataframe(dfc, use_container_width=True, height=420)
 
 # =====================
 # FOOTER
 # =====================
-st.caption("v9 — +Compras conectadas a Sheets, alta/suma automática a Productos, PDF Latin‑1 y descarga directa.")
+st.caption("v10 — Compras (Decants y Vendedor separados), alta/suma a Productos, PDF Latin‑1 y descarga directa.")
