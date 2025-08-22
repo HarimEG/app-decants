@@ -226,7 +226,7 @@ def _get_stock(df: pd.DataFrame, idx) -> float:
         val = pd.to_numeric(df.at[idx, "Stock disponible"], errors="coerce")
         return float(0.0 if pd.isna(val) else val)
     except Exception:
-        return 0.0
+        return 0
 
 def _set_stock(df: pd.DataFrame, idx, nuevo: float):
     df.at[idx, "Stock disponible"] = max(0.0, round(float(nuevo), 3))
@@ -248,7 +248,7 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     s_status  = _latin1(f"Estatus: {estatus}")
 
     filas = []
-    total_general = 0.0
+    total_general = 0
     for fila in productos or []:
         try:
             nombre, ml, costo, total = fila
@@ -257,7 +257,7 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
         filas.append((_latin1(str(nombre))[:60], _latin1(f"{float(ml):g}"),
                       _latin1(_fmt_money(costo)), _latin1(_fmt_money(total))))
         try:
-            total_general += float(total or 0.0)
+            total_general += float(total or 0)
         except Exception:
             pass
 
