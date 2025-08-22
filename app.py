@@ -287,8 +287,8 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     for nombre_s, ml_s, costo_s, total_s in filas:
         pdf.cell(90, 8, nombre_s, 1)
         pdf.cell(25, 8, ml_s, 1, 0, "C")
-        pdf.cell(35, 8, costo_s, 1, 0, "R")
-        pdf.cell(35, 8, total_s, 1, 1, "R")
+        pdf.cell(35, 8, costo_s, 1, 0, "C")
+        pdf.cell(35, 8, total_s, 1, 1, "C")
 
     pdf.set_font("Arial", "B", 12)
     pdf.cell(150, 9, _latin1("TOTAL GENERAL"), 1, 0, "R")
