@@ -1,4 +1,4 @@
-# app.py — H DECANTS (v10: Compras robusta + botón limpiar Compras + PDF Latin-1)
+# app.py — H DECANTS (v10: Compras robusta + botón limpiar Compras + PDF Latin-1)1
 # ===============================================================================
 
 import os
