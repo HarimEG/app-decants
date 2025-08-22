@@ -291,7 +291,7 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
         pdf.cell(35, 8, total_s, 1, 1, "C")
 
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(150, 9, _latin1("TOTAL GENERAL"), 1, 0, "R")
+    pdf.cell(150, 9, _latin1("TOTAL GENERAL"), 1, 0, "C")
     pdf.cell(35, 9, _latin1(_fmt_money(total_general)), 1, 1, "R")
     pdf.ln(6)
 
