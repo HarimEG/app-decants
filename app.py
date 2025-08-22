@@ -106,9 +106,9 @@ def load_productos_df() -> pd.DataFrame:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
     df["Producto"] = df.get("Producto", pd.Series(dtype=str)).astype(str)
     if "Costo x ml" in df:
-        df["Costo x ml"] = pd.to_numeric(df["Costo x ml"], errors="coerce").fillna(0.0)
+        df["Costo x ml"] = pd.to_numeric(df["Costo x ml"], errors="coerce").fillna(0)
     if "Stock disponible" in df:
-        df["Stock disponible"] = pd.to_numeric(df["Stock disponible"], errors="coerce").fillna(0.0)
+        df["Stock disponible"] = pd.to_numeric(df["Stock disponible"], errors="coerce").fillna(0)
     return df
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -120,7 +120,7 @@ def load_pedidos_df() -> pd.DataFrame:
     for col in ["# Pedido", "Mililitros"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     for col in ["Costo x ml","Total"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     return df
 
 def save_productos_df(df: pd.DataFrame):
@@ -195,7 +195,7 @@ def load_compras_df() -> pd.DataFrame:
 
     # Tipos
     df["Pzs"]   = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
-    df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0.0)
+    df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0)
     # Año puede venir como texto
     df["Año"]   = pd.to_numeric(df["Año"], errors="coerce").fillna(0).astype(int)
 
@@ -215,7 +215,7 @@ def append_compra_row(row: List[str]):
 def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
     if pedidos_df.empty or "# Pedido" not in pedidos_df.columns:
         return 1
-    return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
+    return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(1).max()) + 1
 
 def _get_product_row_idx(df: pd.DataFrame, nombre: str):
     idxs = df.index[df["Producto"] == nombre]
@@ -356,12 +356,12 @@ with tab1:
             prod_pick = st.multiselect("Producto", options=opts_list, default=opts_list[:1], key="picker_producto")
             prod_sel = prod_pick[0] if prod_pick else "—"
         with c2:
-            ml = st.number_input("ML", min_value=0.0, step=0.5, value=0.0)
+            ml = st.number_input("ML", min_value=0, step=1, value=0)
         with c3:
             if (not productos_df.empty) and (prod_sel in productos_df["Producto"].values):
                 costo_actual = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Costo x ml"].iloc[0])
             else:
-                costo_actual = 0.0
+                costo_actual = 0
             st.number_input("Costo/ml (ref)", value=float(costo_actual), disabled=True, key="costo_ref")
         with c4:
             st.write("")
@@ -375,9 +375,9 @@ with tab1:
             else:
                 if not productos_df.empty and prod_sel in productos_df["Producto"].values:
                     idx = _get_product_row_idx(productos_df, prod_sel)
-                    stock_disp = _get_stock(productos_df, idx) if idx is not None else 0.0
+                    stock_disp = _get_stock(productos_df, idx) if idx is not None else 0
                 else:
-                    stock_disp = 0.0
+                    stock_disp = 0
                 if ml > stock_disp:
                     st.error(f"Stock insuficiente. Disponible: {stock_disp:g} ml")
                 else:
@@ -491,8 +491,8 @@ with tab2:
             st.write(f"Estatus actual: **{estatus_actual}**")
 
             editable = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].copy()
-            editable["Mililitros"] = pd.to_numeric(editable["Mililitros"], errors="coerce").fillna(0.0)
-            editable["Costo x ml"] = pd.to_numeric(editable["Costo x ml"], errors="coerce").fillna(0.0)
+            editable["Mililitros"] = pd.to_numeric(editable["Mililitros"], errors="coerce").fillna(0)
+            editable["Costo x ml"] = pd.to_numeric(editable["Costo x ml"], errors="coerce").fillna(0)
             editable["Total"] = (editable["Mililitros"] * editable["Costo x ml"]).round(2)
 
             edited = st.data_editor(
@@ -578,9 +578,9 @@ with tab3:
         with cpa:
             nombre_producto = st.text_input("Nombre del producto", key="np_nombre")
         with cpb:
-            costo_ml = st.number_input("Costo por ml", min_value=0.0, step=0.1, key="np_costo")
+            costo_ml = st.number_input("Costo por ml", min_value=0, step=0.1, key="np_costo")
         with cpc:
-            stock_ini = st.number_input("Stock disponible (ml)", min_value=0.0, step=1.0, key="np_stock")
+            stock_ini = st.number_input("Stock disponible (ml)", min_value=0, step=1.0, key="np_stock")
         if st.button("Agregar", key="np_add"):
             if not nombre_producto or not nombre_producto.strip() or costo_ml <= 0:
                 st.error("Complete nombre y costo (>0).")
@@ -656,7 +656,7 @@ with tab4:
                 fila = [
                     producto_c.strip(),
                     int(pzs_c or 0),
-                    float(costo_c or 0.0),
+                    float(costo_c or 0),
                     status_c,
                     mes_c,
                     fecha_c.strftime("%Y-%m-%d") if isinstance(fecha_c, (datetime, date)) else str(fecha_c),
@@ -675,8 +675,8 @@ with tab4:
                     if producto_c.strip() not in prods_local["Producto"].values:
                         nuevo_prod = pd.DataFrame([{
                             "Producto": producto_c.strip(),
-                            "Costo x ml": 0.0,
-                            "Stock disponible": 0.0
+                            "Costo x ml": 0,
+                            "Stock disponible": 0
                         }])
                         prods2 = pd.concat([prods_local, nuevo_prod], ignore_index=True)
                         save_productos_df(prods2)
