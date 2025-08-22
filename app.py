@@ -705,7 +705,7 @@ with tab4:
     # ------- Tabla de compras -------
     st.markdown("### 📄 Historial de compras")
     compras_df = load_compras_df().copy()
-    st.dataframe(compras_df, use_container_width=True, height=420, key="compras_editor")
+    st.dataframe(compras_df, use_container_width=True, height=420)
 
 # =====================
 # FOOTER
