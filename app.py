@@ -356,7 +356,7 @@ with tab1:
             prod_pick = st.multiselect("Producto", options=opts_list, default=opts_list[:1], key="picker_producto")
             prod_sel = prod_pick[0] if prod_pick else "—"
         with c2:
-            ml = st.number_input("ML", min_value=0.0, step=0.5, value=0.0)
+            ml = st.number_input("ML", min_value=0.0, step=1.0, value=0.0)
         with c3:
             if (not productos_df.empty) and (prod_sel in productos_df["Producto"].values):
                 costo_actual = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Costo x ml"].iloc[0])
@@ -630,7 +630,7 @@ with tab4:
     with col1:
         producto_c = st.text_input("Producto", key="compr_prod")
         pzs_c      = st.number_input("Pzs", min_value=0, step=1, key="compr_pzs")
-        costo_c    = st.number_input("Costo", min_value=0.0, step=0.01, key="compr_costo")
+        costo_c    = st.number_input("Costo", min_value=0.0, step=50.0, key="compr_costo")
     with col2:
         status_c   = st.selectbox("Status", ["Pendiente","Recibido","Cancelado"], key="compr_status")
         mes_c      = st.selectbox("Mes", MESES, index=datetime.today().month-1, key="compr_mes")
