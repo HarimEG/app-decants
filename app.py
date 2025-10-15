@@ -302,9 +302,9 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     pdf.set_font("Arial", "", 11)
     leyenda = (
         "Forma de pago\n"
-        "Banco: BBVA\n"
+        "Banco: Mercado Pago W\n"
         "Titular: Harim Escalona\n"
-        "Cuenta/Tarjeta: 4815 1632 0357 9563\n\n"
+        "Cuenta/Tarjeta: 722969040233441268\n\n"
         "- Si la cotizacion es correcta, realiza el pago y comparte el comprobante.\n"
         "- Una vez confirmado el pago, tu pedido se prepara y se envia."
     )
