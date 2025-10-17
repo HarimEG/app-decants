@@ -1,5 +1,5 @@
-# app.py — H DECANTS (v10: Compras robusta + botón limpiar Compras + PDF Latin-1)1
-# ===============================================================================
+# app.py — H DECANTS (v11: lazy GSheets, reconectar, móvil estable)
+# =================================================================
 
 import os
 import base64
@@ -13,6 +13,13 @@ from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 from dateutil.relativedelta import relativedelta
 
+# autorefresh opcional para móviles
+try:
+    from streamlit_autorefresh import st_autorefresh
+    _HAS_AR = True
+except Exception:
+    _HAS_AR = False
+
 # =====================
 # CONFIG Y CONSTANTES
 # =====================
@@ -25,7 +32,7 @@ SHEET_URL            = "https://docs.google.com/spreadsheets/d/1bjV4EaDNNbJfN4hu
 SHEET_TAB_PRODUCTOS  = "Productos"
 SHEET_TAB_PEDIDOS    = "Pedidos"
 SHEET_TAB_ENVIOS     = "Envios"
-SHEET_TAB_COMPRAS    = "Compras"  # NUEVO
+SHEET_TAB_COMPRAS    = "Compras"
 
 COMPRAS_COLS = [
     "Producto", "Pzs", "Costo", "Status", "Mes", "Fecha", "Año",
@@ -37,16 +44,27 @@ MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
          "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
 # =====================
-# CABECERA
+# CABECERA + Reconexión
 # =====================
 st.image(LOGO_URL, width=140)
 st.title("H DECANTS — Gestión de Pedidos")
 
+col_r, _ = st.columns([1, 5])
+with col_r:
+    if st.button("🔄 Reconectar"):
+        # limpia caches y re-ejecuta
+        get_client_and_ws.clear()
+        load_productos_df.clear(); load_pedidos_df.clear(); load_compras_df.clear()
+        st.experimental_rerun()
+
+# refresco suave cada 90 s para reabrir WebSocket en móviles (opcional)
+if _HAS_AR:
+    st_autorefresh(interval=90_000, key="auto")
+
 # =====================
-# CLIENTE GSHEETS
+# CLIENTE GSHEETS (lazy)
 # =====================
 def _get_or_create_ws(sheet, title: str, rows: int = 200, cols: int = 20):
-    """Obtiene worksheet por título o lo crea si no existe."""
     try:
         return sheet.worksheet(title)
     except Exception:
@@ -54,6 +72,7 @@ def _get_or_create_ws(sheet, title: str, rows: int = 200, cols: int = 20):
 
 @st.cache_resource(show_spinner=False)
 def get_client_and_ws():
+    """Crea cliente y devuelve worksheets. Cachea el recurso."""
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"], scopes=scope)
     client = gspread.authorize(creds)
@@ -74,7 +93,13 @@ def get_client_and_ws():
 
     return client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws
 
-client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws = get_client_and_ws()
+def get_ws():
+    """Wrapper con manejo de error para llamadas perezosas."""
+    try:
+        return get_client_and_ws()
+    except Exception as e:
+        st.error(f"No hay conexión con Google Sheets: {e}")
+        st.stop()
 
 # =====================
 # HELPERS (Latin-1 / descarga)
@@ -101,7 +126,12 @@ def link_descarga_pdf(pdf_bytes: bytes, filename: str) -> str:
 # =====================
 @st.cache_data(ttl=60, show_spinner=False)
 def load_productos_df() -> pd.DataFrame:
-    df = pd.DataFrame(productos_ws.get_all_records())
+    try:
+        _, _, productos_ws, *_ = get_ws()
+        df = pd.DataFrame(productos_ws.get_all_records())
+    except Exception as e:
+        st.warning(f"Fallo leyendo Productos: {e}")
+        return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
     if df.empty:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
     df["Producto"] = df.get("Producto", pd.Series(dtype=str)).astype(str)
@@ -113,7 +143,12 @@ def load_productos_df() -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_pedidos_df() -> pd.DataFrame:
-    df = pd.DataFrame(pedidos_ws.get_all_records())
+    try:
+        _, _, _, pedidos_ws, *_ = get_ws()
+        df = pd.DataFrame(pedidos_ws.get_all_records())
+    except Exception as e:
+        st.warning(f"Fallo leyendo Pedidos: {e}")
+        return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
     if df.empty:
         return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
     df["Producto"] = df.get("Producto", pd.Series(dtype=str)).astype(str)
@@ -124,31 +159,40 @@ def load_pedidos_df() -> pd.DataFrame:
     return df
 
 def save_productos_df(df: pd.DataFrame):
-    productos_ws.clear()
-    productos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
-    load_productos_df.clear()
+    try:
+        _, _, productos_ws, *_ = get_ws()
+        productos_ws.clear()
+        productos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
+        load_productos_df.clear()
+    except Exception as e:
+        st.error(f"No se pudo guardar Productos: {e}")
 
 def save_pedidos_df(df: pd.DataFrame):
-    pedidos_ws.clear()
-    pedidos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
-    load_pedidos_df.clear()
+    try:
+        _, _, _, pedidos_ws, *_ = get_ws()
+        pedidos_ws.clear()
+        pedidos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
+        load_pedidos_df.clear()
+    except Exception as e:
+        st.error(f"No se pudo guardar Pedidos: {e}")
 
 def append_envio_row(data: List):
-    envios_ws.append_row(data)
+    try:
+        _, _, _, _, envios_ws, _ = get_ws()
+        envios_ws.append_row(data)
+    except Exception as e:
+        st.error(f"No se pudo agregar envío: {e}")
 
 # =====================
-# COMPRAS: carga ultra-robusta + append (no borra hoja)
+# COMPRAS: carga robusta + append
 # =====================
 @st.cache_data(ttl=30, show_spinner=False)
 def load_compras_df() -> pd.DataFrame:
-    """
-    Tolerante a:
-      - Hoja vacía
-      - Solo encabezados
-      - Encabezados en orden distinto
-      - Filas con longitud variable
-    No levanta IndexError.
-    """
+    try:
+        _, _, _, _, _, compras_ws = get_ws()
+    except Exception:
+        return pd.DataFrame(columns=COMPRAS_COLS)
+
     # Asegura encabezados
     try:
         hdr = compras_ws.row_values(1)
@@ -156,58 +200,49 @@ def load_compras_df() -> pd.DataFrame:
         hdr = []
     EXPECT = COMPRAS_COLS
     if not hdr:
-        compras_ws.update("A1", [EXPECT])
+        try:
+            compras_ws.update("A1", [EXPECT])
+        except Exception:
+            pass
         return pd.DataFrame(columns=EXPECT)
 
     # Lee un rango grande y normaliza
     try:
         raw = compras_ws.get_values("A1:K10000")
-    except Exception:
+    except Exception as e:
+        st.warning(f"Fallo leyendo Compras: {e}")
         raw = []
 
     if not raw:
         return pd.DataFrame(columns=EXPECT)
 
-    # Normaliza encabezados
-    headers = raw[0]
-    # Si faltan o sobran, los recortamos/extendemos a 11
-    headers = (headers + [""] * 11)[:11]
-
-    # Construye filas, omitiendo totalmente vacías
+    headers = (raw[0] + [""] * 11)[:11]
     rows = []
     for r in raw[1:]:
         if not any(str(c).strip() for c in r):
             continue
-        r = (r + [""] * 11)[:11]
-        rows.append(r)
+        rows.append((r + [""] * 11)[:11])
 
     if not rows:
-        # No hay datos debajo de headers
         return pd.DataFrame(columns=EXPECT)
 
     df = pd.DataFrame(rows, columns=headers)
-
-    # Asegura todas las columnas esperadas y orden final
     for col in EXPECT:
         if col not in df.columns:
             df[col] = ""
     df = df[EXPECT].copy()
-
-    # Tipos
     df["Pzs"]   = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
     df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0.0)
-    # Año puede venir como texto
     df["Año"]   = pd.to_numeric(df["Año"], errors="coerce").fillna(0).astype(int)
-
     return df
 
 def append_compra_row(row: List[str]):
-    """
-    Escribe UNA fila al final de 'Compras' (no borra contenido).
-    Orden de columnas: COMPRAS_COLS.
-    """
-    compras_ws.append_row(row, value_input_option="USER_ENTERED")
-    load_compras_df.clear()
+    try:
+        _, _, _, _, _, compras_ws = get_ws()
+        compras_ws.append_row(row, value_input_option="USER_ENTERED")
+        load_compras_df.clear()
+    except Exception as e:
+        st.error(f"No se pudo guardar la compra: {e}")
 
 # =====================
 # UTILIDADES DE STOCK
@@ -232,7 +267,7 @@ def _set_stock(df: pd.DataFrame, idx, nuevo: float):
     df.at[idx, "Stock disponible"] = max(0.0, round(float(nuevo), 3))
 
 def ensure_session_keys():
-    st.session_state.setdefault("pedido_items", [])   # [(prod, ml, costo, total)]
+    st.session_state.setdefault("pedido_items", [])
     st.session_state.setdefault("nueva_sesion", False)
 
 ensure_session_keys()
@@ -314,7 +349,7 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     return raw if isinstance(raw, bytes) else raw.encode("latin-1", "ignore")
 
 # =====================
-# DATOS INICIALES
+# DATOS INICIALES (lazy)
 # =====================
 productos_df = load_productos_df()
 pedidos_df   = load_pedidos_df()
@@ -619,7 +654,7 @@ with tab3:
                 st.experimental_rerun()
 
 # =====================
-# TAB 4: COMPRAS (con botón limpiar SOLO Compras)
+# TAB 4: COMPRAS
 # =====================
 with tab4:
     st.subheader("🛒 Compras")
@@ -670,28 +705,26 @@ with tab4:
                 st.success("Compra guardada en la hoja **Compras**.")
 
                 # Si Decants = Sí -> agrega a Productos si no existe
-                if decants_flag_c == "Sí":
-                    prods_local = load_productos_df()
-                    if producto_c.strip() not in prods_local["Producto"].values:
-                        nuevo_prod = pd.DataFrame([{
-                            "Producto": producto_c.strip(),
-                            "Costo x ml": 0.0,
-                            "Stock disponible": 0.0
-                        }])
-                        prods2 = pd.concat([prods_local, nuevo_prod], ignore_index=True)
-                        save_productos_df(prods2)
-                        st.info("También se agregó a **Productos** (costo/stock en 0).")
+                prods_local = load_productos_df()
+                if decants_flag_c == "Sí" and producto_c.strip() not in prods_local["Producto"].values:
+                    nuevo_prod = pd.DataFrame([{
+                        "Producto": producto_c.strip(),
+                        "Costo x ml": 0.0,
+                        "Stock disponible": 0.0
+                    }])
+                    prods2 = pd.concat([prods_local, nuevo_prod], ignore_index=True)
+                    save_productos_df(prods2)
+                    st.info("También se agregó a **Productos** (costo/stock en 0).")
 
                 st.experimental_rerun()
 
-    # ------- Botón limpiar SOLO compras -------
     def limpiar_solo_compras():
         keys = [
             "compr_prod", "compr_pzs", "compr_costo",
             "compr_status", "compr_mes", "compr_fecha", "compr_anio",
             "compr_dequien", "compr_status_pago",
             "compr_decants", "compr_vendedor",
-            "compras_editor"  # si existe editor
+            "compras_editor"
         ]
         for k in keys:
             st.session_state.pop(k, None)
@@ -710,4 +743,4 @@ with tab4:
 # =====================
 # FOOTER
 # =====================
-st.caption("v10 — Compras robusta, botón de limpieza local (solo Compras), PDF Latin‑1 y flujo estable.")
+st.caption("Made with Streamlit")
