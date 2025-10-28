@@ -59,7 +59,7 @@ with col_r:
 
 # refresco suave cada 90 s para reabrir WebSocket en móviles (opcional)
 if _HAS_AR:
-    st_autorefresh(interval=90_000, key="auto")
+    st_autorefresh(interval=20_000, key="auto")
 
 # =====================
 # CLIENTE GSHEETS (lazy)
