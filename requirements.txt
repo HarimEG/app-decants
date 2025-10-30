@@ -2,7 +2,7 @@
 streamlit
 pandas
 gspread
-google-oauth2-service-account
+google-auth
 fpdf2
 python-dateutil
 streamlit-autorefresh
