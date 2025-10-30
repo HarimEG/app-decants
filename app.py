@@ -57,9 +57,9 @@ with col_r:
         load_productos_df.clear(); load_pedidos_df.clear(); load_compras_df.clear()
         st.experimental_rerun()
 
-# refresco suave cada 90 s para reabrir WebSocket en móviles (opcional)
+# refresco suave cada 60 s para reabrir WebSocket en móviles (opcional)
 if _HAS_AR:
-    st_autorefresh(interval=20_000, key="auto")
+    st_autorefresh(interval=60_000, key="auto") # <-- ÚNICO CAMBIO AQUÍ
 
 # =====================
 # CLIENTE GSHEETS (lazy)
@@ -672,7 +672,7 @@ with tab4:
         fecha_c    = st.date_input("Fecha", value=date.today(), key="compr_fecha")
     with col3:
         anio_c        = st.number_input("Año", min_value=2020, max_value=2100,
-                                        value=date.today().year, step=1, key="compr_anio")
+                                        value=date.today().year, step=1, key="comtr_anio")
         de_quien_c    = st.selectbox("De quien", ["Ahinoan","Harim","A&H"], key="compr_dequien")
         status_pago_c = st.selectbox("Status de Pago", ["Pendiente","Pagado","Parcial"], key="compr_status_pago")
 
