@@ -1,5 +1,5 @@
-# app.py — H DECANTS (v12: lecturas por rango, append_rows, updates parciales, móvil rápido)
-# =========================================================================================
+# app.py — H DECANTS (v12.1 Turbo: carga diferida + móvil rápido)
+# ===============================================================
 
 import os
 import base64
@@ -43,6 +43,9 @@ ESTATUS_LIST = ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"]
 MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
          "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
+# Estado de conexión diferida
+st.session_state.setdefault("connected", False)
+
 # Logo: primero local para evitar costo de red en móvil
 if os.path.exists(LOGO_LOCAL):
     st.image(LOGO_LOCAL, width=140)
@@ -63,6 +66,24 @@ with col_r:
 if _HAS_AR:
     st_autorefresh(interval=120_000, key="auto")
 
+# ============
+# SIDEBAR
+# ============
+with st.sidebar:
+    st.subheader("Conexión")
+    if not st.session_state.connected:
+        st.info("Para reducir la espera en iPhone, la conexión a Google Sheets se hace bajo demanda.")
+        if st.button("🚀 Conectar a Google Sheets", use_container_width=True, type="primary"):
+            st.session_state.connected = True
+            st.experimental_rerun()
+    else:
+        st.success("Conectado a Google Sheets")
+        if st.button("Desconectar", use_container_width=True):
+            st.session_state.connected = False
+            get_client_and_ws.clear()
+            load_productos_df.clear(); load_pedidos_df.clear(); load_compras_df.clear()
+            st.experimental_rerun()
+
 # =====================
 # CLIENTE GSHEETS (lazy)
 # =====================
@@ -75,6 +96,10 @@ def _get_or_create_ws(sheet, title: str, rows: int = 200, cols: int = 20):
 @st.cache_resource(show_spinner=False)
 def get_client_and_ws():
     """Crea cliente y devuelve worksheets. Cachea el recurso."""
+    # No intentes conectar si el usuario aún no presiona "Conectar"
+    if not st.session_state.get("connected", False):
+        raise RuntimeError("Aún no conectado a Google Sheets (carga diferida activada).")
+
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"], scopes=scope)
     client = gspread.authorize(creds)
@@ -85,15 +110,7 @@ def get_client_and_ws():
     envios_ws    = _get_or_create_ws(sheet, SHEET_TAB_ENVIOS)
     compras_ws   = _get_or_create_ws(sheet, SHEET_TAB_COMPRAS)
 
-    # Asegura encabezados en Compras
-    try:
-        hdr = compras_ws.row_values(1)
-        if not hdr:
-            compras_ws.update("A1", [COMPRAS_COLS])
-    except Exception:
-        pass
-
-    # Asegura encabezados en Productos y Pedidos (por si no existieran)
+    # Asegura encabezados básicos
     try:
         if not productos_ws.row_values(1):
             productos_ws.update("A1", [["Producto","Costo x ml","Stock disponible"]])
@@ -104,6 +121,12 @@ def get_client_and_ws():
             pedidos_ws.update("A1", [["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"]])
     except Exception:
         pass
+    try:
+        hdr = compras_ws.row_values(1)
+        if not hdr:
+            compras_ws.update("A1", [COMPRAS_COLS])
+    except Exception:
+        pass
 
     return client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws
 
@@ -111,6 +134,9 @@ def get_ws():
     """Wrapper con manejo de error para llamadas perezosas."""
     try:
         return get_client_and_ws()
+    except RuntimeError as e:
+        # Aún no conectado (escenario esperado en primera carga)
+        st.stop()
     except Exception as e:
         st.error(f"No hay conexión con Google Sheets: {e}")
         st.stop()
@@ -140,21 +166,14 @@ def link_descarga_pdf(pdf_bytes: bytes, filename: str) -> str:
 # =====================
 @st.cache_data(ttl=600, show_spinner=False)
 def load_productos_df() -> pd.DataFrame:
-    try:
-        _, _, productos_ws, *_ = get_ws()
-        vals = productos_ws.get_values("A1:C20000")  # ["Producto","Costo x ml","Stock disponible"]
-    except Exception as e:
-        st.warning(f"Fallo leyendo Productos: {e}")
-        vals = []
-
+    _, _, productos_ws, *_ = get_ws()
+    vals = productos_ws.get_values("A1:C20000")  # ["Producto","Costo x ml","Stock disponible"]
     if not vals:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
-
     headers = (vals[0] + ["","",""])[:3]
     rows = [r for r in vals[1:] if any(str(c).strip() for c in r)]
     if not rows:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
-
     df = pd.DataFrame(rows, columns=headers)
     for c in ["Costo x ml","Stock disponible"]:
         if c in df:
@@ -165,25 +184,16 @@ def load_productos_df() -> pd.DataFrame:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_pedidos_df() -> pd.DataFrame:
-    try:
-        _, _, _, pedidos_ws, *_ = get_ws()
-        vals = pedidos_ws.get_values("A1:H200000")
-    except Exception as e:
-        st.warning(f"Fallo leyendo Pedidos: {e}")
-        vals = []
-
+    _, _, _, pedidos_ws, *_ = get_ws()
+    vals = pedidos_ws.get_values("A1:H200000")
     cols = ["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"]
     if not vals:
         return pd.DataFrame(columns=cols)
-
     headers = (vals[0] + [""]*8)[:8]
     rows = [r for r in vals[1:] if any(str(c).strip() for c in r)]
     if not rows:
         return pd.DataFrame(columns=cols)
-
     df = pd.DataFrame(rows, columns=headers)
-
-    # normaliza tipos
     for c in ["# Pedido","Mililitros"]:
         if c in df: df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     for c in ["Costo x ml","Total"]:
@@ -192,21 +202,14 @@ def load_pedidos_df() -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_compras_df() -> pd.DataFrame:
-    try:
-        _, _, _, _, _, compras_ws = get_ws()
-        raw = compras_ws.get_values("A1:K10000")
-    except Exception as e:
-        st.warning(f"Fallo leyendo Compras: {e}")
-        raw = []
-
+    _, _, _, _, _, compras_ws = get_ws()
+    raw = compras_ws.get_values("A1:K10000")
     if not raw:
         return pd.DataFrame(columns=COMPRAS_COLS)
-
     headers = (raw[0] + [""] * 11)[:11]
     rows = [ (r + [""]*11)[:11] for r in raw[1:] if any(str(c).strip() for c in r) ]
     if not rows:
         return pd.DataFrame(columns=COMPRAS_COLS)
-
     df = pd.DataFrame(rows, columns=headers)
     for col in COMPRAS_COLS:
         if col not in df: df[col] = ""
@@ -221,50 +224,33 @@ def load_compras_df() -> pd.DataFrame:
 # =====================
 def save_productos_df(df: pd.DataFrame):
     """Guardado masivo para edición total de Productos (tab 3)."""
-    try:
-        _, _, productos_ws, *_ = get_ws()
-        productos_ws.clear()
-        productos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
-        load_productos_df.clear()
-    except Exception as e:
-        st.error(f"No se pudo guardar Productos: {e}")
+    _, _, productos_ws, *_ = get_ws()
+    productos_ws.clear()
+    productos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
+    load_productos_df.clear()
 
 def append_envio_row(data: List):
-    try:
-        _, _, _, _, envios_ws, _ = get_ws()
-        envios_ws.append_row(data)
-    except Exception as e:
-        st.error(f"No se pudo agregar envío: {e}")
+    _, _, _, _, envios_ws, _ = get_ws()
+    envios_ws.append_row(data)
 
 def append_compra_row(row: List[str]):
-    try:
-        _, _, _, _, _, compras_ws = get_ws()
-        compras_ws.append_row(row, value_input_option="USER_ENTERED")
-        load_compras_df.clear()
-    except Exception as e:
-        st.error(f"No se pudo guardar la compra: {e}")
+    _, _, _, _, _, compras_ws = get_ws()
+    compras_ws.append_row(row, value_input_option="USER_ENTERED")
+    load_compras_df.clear()
 
 def productos_append_row(nombre: str, costo_ml: float = 0.0, stock: float = 0.0):
-    try:
-        _, _, productos_ws, *_ = get_ws()
-        productos_ws.append_row([nombre, float(costo_ml), float(stock)], value_input_option="USER_ENTERED")
-        load_productos_df.clear()
-    except Exception as e:
-        st.error(f"No se pudo agregar el producto '{nombre}': {e}")
+    _, _, productos_ws, *_ = get_ws()
+    productos_ws.append_row([nombre, float(costo_ml), float(stock)], value_input_option="USER_ENTERED")
+    load_productos_df.clear()
 
 # =====================
-# HELPERS GSHEETS v12 (rápidos y parciales)
+# HELPERS GSHEETS (parciales)
 # =====================
 def _productos_index_map():
-    """Devuelve dict {nombre: (row_index, costo_ml, stock)} usando solo columnas A..C."""
-    try:
-        _, _, productos_ws, *_ = get_ws()
-        nombres = productos_ws.get_values("A2:A20000")
-        costos  = productos_ws.get_values("B2:B20000")
-        stocks  = productos_ws.get_values("C2:C20000")
-    except Exception:
-        return {}
-
+    _, _, productos_ws, *_ = get_ws()
+    nombres = productos_ws.get_values("A2:A20000")
+    costos  = productos_ws.get_values("B2:B20000")
+    stocks  = productos_ws.get_values("C2:C20000")
     out = {}
     n = max(len(nombres), len(costos), len(stocks))
     for i in range(n):
@@ -279,71 +265,46 @@ def _productos_index_map():
             stk   = float(stocks[i][0]) if (i < len(stocks) and stocks[i] and str(stocks[i][0]).strip()) else 0.0
         except Exception:
             stk = 0.0
-        out[nom] = (i+2, costo, stk)  # +2 por el header
+        out[nom] = (i+2, costo, stk)  # +2 por header
     return out
 
 def productos_update_stock(nombre: str, nuevo_stock: float):
-    """Actualiza solo la celda de stock para un producto (Batch por Spreadsheet)."""
     idx = _productos_index_map().get(nombre)
     if not idx:
         st.warning(f"'{nombre}' no existe en Productos.")
         return
     row = idx[0]
-    try:
-        _, sheet, productos_ws, *_ = get_ws()
-        sheet.batch_update({
-            "valueInputOption": "USER_ENTERED",
-            "data": [
-                {"range": f"{productos_ws.title}!C{row}:C{row}", "values": [[round(max(0.0, float(nuevo_stock)), 3)]]}
-            ],
-        })
-        load_productos_df.clear()
-    except Exception as e:
-        st.error(f"No se pudo actualizar stock de '{nombre}': {e}")
+    _, sheet, productos_ws, *_ = get_ws()
+    sheet.batch_update({
+        "valueInputOption": "USER_ENTERED",
+        "data": [
+            {"range": f"{productos_ws.title}!C{row}:C{row}", "values": [[round(max(0.0, float(nuevo_stock)), 3)]]}
+        ],
+    })
+    load_productos_df.clear()
 
 def pedidos_next_id_fast() -> int:
-    """Siguiente # Pedido leyendo solo columna A."""
-    try:
-        _, _, _, pedidos_ws, *_ = get_ws()
-        col = pedidos_ws.col_values(1)  # incluye header "# Pedido"
-    except Exception:
-        return 1
+    _, _, _, pedidos_ws, *_ = get_ws()
+    col = pedidos_ws.col_values(1)  # incluye header
     nums = []
     for v in col[1:]:
-        try:
-            nums.append(int(float(v)))
-        except Exception:
-            pass
+        try: nums.append(int(float(v)))
+        except: pass
     return (max(nums)+1) if nums else 1
 
 def pedidos_append_rows(rows: List[List]):
-    """Agrega múltiples filas a Pedidos (A..H)."""
-    try:
-        _, _, _, pedidos_ws, *_ = get_ws()
-        pedidos_ws.append_rows(rows, value_input_option="USER_ENTERED")
-        load_pedidos_df.clear()
-    except Exception as e:
-        st.error(f"No se pudieron agregar filas a Pedidos: {e}")
+    _, _, _, pedidos_ws, *_ = get_ws()
+    pedidos_ws.append_rows(rows, value_input_option="USER_ENTERED")
+    load_pedidos_df.clear()
 
 def pedidos_update_parcial(pedido_id: int, cambios_ml_por_producto: List[Tuple[str, float]], nuevo_estatus: str = None):
-    """
-    Cambia ML (y Total = ML*Costo/ml) para pares (Producto, ml_nuevo) de un #Pedido,
-    y opcionalmente el Estatus, sin reescribir toda la hoja. Usa batch_update del Spreadsheet.
-    """
     if not cambios_ml_por_producto and not nuevo_estatus:
         return
+    _, sheet, _, pedidos_ws, *_ = get_ws()
+    col_ids = pedidos_ws.get_values("A2:A200000")
+    col_pro = pedidos_ws.get_values("D2:D200000")
+    col_cml = pedidos_ws.get_values("F2:F200000")
 
-    try:
-        _, sheet, _, pedidos_ws, *_ = get_ws()
-        # Mapeo filas del pedido: leemos col A (#), D (Producto) y F (Costo/ml)
-        col_ids = pedidos_ws.get_values("A2:A200000")
-        col_pro = pedidos_ws.get_values("D2:D200000")
-        col_cml = pedidos_ws.get_values("F2:F200000")
-    except Exception as e:
-        st.error(f"No se pudo leer mapeo de Pedidos: {e}")
-        return
-
-    # Construye mapa producto -> (row, costo_ml) solo para el pedido
     mapa = {}
     pid_str = str(int(pedido_id))
     n = max(len(col_ids), len(col_pro), len(col_cml))
@@ -356,12 +317,11 @@ def pedidos_update_parcial(pedido_id: int, cambios_ml_por_producto: List[Tuple[s
             cml = float(col_cml[i][0]) if (i < len(col_cml) and col_cml[i] and str(col_cml[i][0]).strip()) else 0.0
         except Exception:
             cml = 0.0
-        mapa[pro] = (i+2, cml)  # +2 por header
+        mapa[pro] = (i+2, cml)
 
     data_ranges = []
-    # Actualización de ML (col E) y Total (col G)
     for pro, ml_new in (cambios_ml_por_producto or []):
-        if pro not in mapa:
+        if pro not in mapa: 
             st.warning(f"Producto '{pro}' no aparece en pedido #{pedido_id} (omite).")
             continue
         row, cml = mapa[pro]
@@ -369,19 +329,13 @@ def pedidos_update_parcial(pedido_id: int, cambios_ml_por_producto: List[Tuple[s
         data_ranges.append({"range": f"{pedidos_ws.title}!E{row}:E{row}", "values": [[float(ml_new)]]})
         data_ranges.append({"range": f"{pedidos_ws.title}!G{row}:G{row}", "values": [[total]]})
 
-    # Estatus (col H) — actualizar todas las filas del pedido
     if nuevo_estatus:
         for _, (row, _) in mapa.items():
             data_ranges.append({"range": f"{pedidos_ws.title}!H{row}:H{row}", "values": [[nuevo_estatus]]})
 
-    if not data_ranges:
-        return
-
-    try:
+    if data_ranges:
         sheet.batch_update({"valueInputOption": "USER_ENTERED", "data": data_ranges})
         load_pedidos_df.clear()
-    except Exception as e:
-        st.error(f"No se pudo actualizar el pedido #{pedido_id}: {e}")
 
 # =====================
 # SESIÓN
@@ -477,12 +431,14 @@ tab1, tab2, tab3, tab4 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Pr
 # TAB 1: NUEVO PEDIDO
 # =====================
 with tab1:
-    # carga mínima para arrancar rápido
-    productos_df = load_productos_df()
-
     if st.session_state.get("nueva_sesion", False):
         st.session_state.pedido_items = []
         st.session_state.nueva_sesion = False
+
+    if not st.session_state.connected:
+        st.info("Pulsa **“Conectar a Google Sheets”** en la barra lateral para cargar Productos.")
+    else:
+        productos_df = load_productos_df()
 
     with st.form("form_pedido", clear_on_submit=False):
         col_a, col_b, col_c = st.columns([3,1.5,1.5])
@@ -497,7 +453,7 @@ with tab1:
         c1, c2, c3, c4 = st.columns([3,1.2,1.2,0.9])
         with c1:
             search = st.text_input("Buscar producto", placeholder="Escribe parte del nombre", key="buscador_prod")
-            if not productos_df.empty:
+            if st.session_state.connected and 'productos_df' in locals() and not productos_df.empty:
                 base_opts = productos_df["Producto"].astype(str)
                 opciones = base_opts[base_opts.str.contains(search, case=False, na=False)] if search else base_opts
                 opts_list = opciones.dropna().tolist()
@@ -508,7 +464,7 @@ with tab1:
         with c2:
             ml = st.number_input("ML", min_value=0.0, step=1.0, value=0.0)
         with c3:
-            if (not productos_df.empty) and (prod_sel in productos_df["Producto"].values):
+            if st.session_state.connected and (prod_sel != "—") and ('productos_df' in locals()):
                 try:
                     costo_actual = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Costo x ml"].iloc[0])
                 except Exception:
@@ -521,17 +477,16 @@ with tab1:
             add = st.form_submit_button("➕ Agregar")
 
         if add:
-            if not prod_sel or prod_sel == "—":
+            if not st.session_state.connected:
+                st.error("Primero conecta a Google Sheets (barra lateral).")
+            elif not prod_sel or prod_sel == "—":
                 st.warning("Seleccione un producto válido.")
             elif ml <= 0:
                 st.warning("Indique mililitros > 0.")
             else:
-                if not productos_df.empty and prod_sel in productos_df["Producto"].values:
-                    try:
-                        stock_disp = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Stock disponible"].iloc[0])
-                    except Exception:
-                        stock_disp = 0.0
-                else:
+                try:
+                    stock_disp = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Stock disponible"].iloc[0])
+                except Exception:
                     stock_disp = 0.0
                 if ml > stock_disp:
                     st.error(f"Stock insuficiente. Disponible: {stock_disp:g} ml")
@@ -565,186 +520,176 @@ with tab1:
         submitted = st.form_submit_button("💾 Guardar Pedido", type="primary")
 
     if submitted:
-        cart_items = list(st.session_state.pedido_items)
-        if not cliente or not cliente.strip():
-            st.error("Ingrese el nombre del cliente.")
-        elif not cart_items:
-            st.error("El carrito está vacío. Agregue al menos un producto.")
+        if not st.session_state.connected:
+            st.error("Primero conecta a Google Sheets (barra lateral).")
         else:
-            # 1) Siguiente ID por columna A
-            pedido_id = pedidos_next_id_fast()
+            cart_items = list(st.session_state.pedido_items)
+            if not cliente or not cliente.strip():
+                st.error("Ingrese el nombre del cliente.")
+            elif not cart_items:
+                st.error("El carrito está vacío. Agregue al menos un producto.")
+            else:
+                pedido_id = pedidos_next_id_fast()
+                filas_pedidos = []
+                for prod, ml_val, costo_val, total_val in cart_items:
+                    filas_pedidos.append([
+                        pedido_id,
+                        cliente.strip(),
+                        fecha.strftime("%Y-%m-%d"),
+                        prod,
+                        float(ml_val),
+                        float(costo_val),
+                        round(float(total_val), 2),
+                        estatus
+                    ])
+                pedidos_append_rows(filas_pedidos)
+                mapa = _productos_index_map()
+                for prod, ml_val, *_ in cart_items:
+                    if prod in mapa:
+                        _, costo_ml, stk = mapa[prod]
+                        nuevo = max(0.0, float(stk) - float(ml_val))
+                        productos_update_stock(prod, nuevo)
+                    else:
+                        st.warning(f"'{prod}' no existe en Productos (no se ajustó stock).")
 
-            # 2) Filas A..H para append_rows
-            filas_pedidos = []
-            for prod, ml_val, costo_val, total_val in cart_items:
-                filas_pedidos.append([
-                    pedido_id,
-                    cliente.strip(),
-                    fecha.strftime("%Y-%m-%d"),
-                    prod,
-                    float(ml_val),
-                    float(costo_val),
-                    round(float(total_val), 2),
-                    estatus
-                ])
+                if requiere_envio and datos_envio:
+                    datos_envio[0] = pedido_id
+                    datos_envio[1] = cliente.strip()
+                    append_envio_row(datos_envio)
 
-            # 3) Inserta en hoja Pedidos (una sola llamada)
-            pedidos_append_rows(filas_pedidos)
+                st.success(f"Pedido #{pedido_id} guardado.")
+                pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, cart_items)
+                filename = f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf"
+                st.markdown(link_descarga_pdf(pdf_bytes, filename), unsafe_allow_html=True)
 
-            # 4) Ajusta stock de Productos (parcial, celda C por producto)
-            mapa = _productos_index_map()
-            for prod, ml_val, *_ in cart_items:
-                if prod in mapa:
-                    _, costo_ml, stk = mapa[prod]
-                    nuevo = max(0.0, float(stk) - float(ml_val))
-                    productos_update_stock(prod, nuevo)
-                else:
-                    st.warning(f"'{prod}' no existe en Productos (no se ajustó stock).")
-
-            # 5) Envío
-            if requiere_envio and datos_envio:
-                datos_envio[0] = pedido_id
-                datos_envio[1] = cliente.strip()
-                append_envio_row(datos_envio)
-
-            st.success(f"Pedido #{pedido_id} guardado.")
-            pdf_bytes = generar_pdf(pedido_id, cliente.strip(), fecha.strftime("%Y-%m-%d"), estatus, cart_items)
-            filename = f"Pedido_{pedido_id}_{cliente.replace(' ','')}.pdf"
-            st.markdown(link_descarga_pdf(pdf_bytes, filename), unsafe_allow_html=True)
-
-            if st.button("🧹 Finalizar y limpiar"):
-                st.session_state.pedido_items = []
-                st.session_state.nueva_sesion = True
-                st.experimental_rerun()
+                if st.button("🧹 Finalizar y limpiar"):
+                    st.session_state.pedido_items = []
+                    st.session_state.nueva_sesion = True
+                    st.experimental_rerun()
 
 # =====================
 # TAB 2: HISTORIAL
 # =====================
 with tab2:
     st.subheader("📋 Historial y Edición de Pedidos")
-    # carga cuando se requiere
-    pedidos_df = load_pedidos_df()
-
-    colf1, colf2, colf3 = st.columns([2,1,1])
-    with colf1:
-        filtro_cli = st.text_input("🔍 Cliente (contiene)", placeholder="Ej. Ana")
-    with colf2:
-        desde = st.date_input("Desde", value=datetime.today().date() - relativedelta(months=6))
-    with colf3:
-        hasta = st.date_input("Hasta", value=datetime.today().date())
-
-    df_hist = pedidos_df.copy()
-    if not df_hist.empty:
-        if filtro_cli:
-            df_hist = df_hist[df_hist["Nombre Cliente"].str.contains(filtro_cli, case=False, na=False)]
-        if "Fecha" in df_hist.columns:
-            df_hist["Fecha_dt"] = pd.to_datetime(df_hist["Fecha"], errors="coerce")
-            df_hist = df_hist[(df_hist["Fecha_dt"] >= pd.to_datetime(desde)) & (df_hist["Fecha_dt"] <= pd.to_datetime(hasta))]
-            df_hist = df_hist.drop(columns=["Fecha_dt"], errors="ignore")
-
-    if df_hist.empty:
-        st.info("No hay pedidos para el rango/cliente seleccionados.")
+    if not st.session_state.connected:
+        st.info("Conéctate para consultar el historial (barra lateral).")
     else:
-        st.dataframe(df_hist.sort_values(["# Pedido","Fecha"]), use_container_width=True, height=420)
+        pedidos_df = load_pedidos_df()
 
-        pedidos_ids = sorted(pd.to_numeric(df_hist["# Pedido"], errors="coerce").dropna().astype(int).unique().tolist())
-        pedido_sel = st.selectbox("🧾 Selecciona un pedido para editar / PDF", pedidos_ids)
+        colf1, colf2, colf3 = st.columns([2,1,1])
+        with colf1:
+            filtro_cli = st.text_input("🔍 Cliente (contiene)", placeholder="Ej. Ana")
+        with colf2:
+            desde = st.date_input("Desde", value=datetime.today().date() - relativedelta(months=6))
+        with colf3:
+            hasta = st.date_input("Hasta", value=datetime.today().date())
 
-        pedido_rows = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
-        if not pedido_rows.empty:
-            cliente_sel = pedido_rows["Nombre Cliente"].iloc[0]
-            estatus_actual = pedido_rows["Estatus"].iloc[-1]
-            st.markdown(f"### Pedido #{pedido_sel} — {cliente_sel}")
-            st.write(f"Estatus actual: **{estatus_actual}**")
+        df_hist = pedidos_df.copy()
+        if not df_hist.empty:
+            if filtro_cli:
+                df_hist = df_hist[df_hist["Nombre Cliente"].str.contains(filtro_cli, case=False, na=False)]
+            if "Fecha" in df_hist.columns:
+                df_hist["Fecha_dt"] = pd.to_datetime(df_hist["Fecha"], errors="coerce")
+                df_hist = df_hist[(df_hist["Fecha_dt"] >= pd.to_datetime(desde)) & (df_hist["Fecha_dt"] <= pd.to_datetime(hasta))]
+                df_hist = df_hist.drop(columns=["Fecha_dt"], errors="ignore")
 
-            editable = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].copy()
-            editable["Mililitros"] = pd.to_numeric(editable["Mililitros"], errors="coerce").fillna(0.0)
-            editable["Costo x ml"] = pd.to_numeric(editable["Costo x ml"], errors="coerce").fillna(0.0)
-            editable["Total"] = (editable["Mililitros"] * editable["Costo x ml"]).round(2)
+        if df_hist.empty:
+            st.info("No hay pedidos para el rango/cliente seleccionados.")
+        else:
+            st.dataframe(df_hist.sort_values(["# Pedido","Fecha"]), use_container_width=True, height=420)
 
-            edited = st.data_editor(
-                editable,
-                use_container_width=True,
-                num_rows="dynamic",
-                disabled=["Costo x ml","Total"],
-                key=f"editor_{pedido_sel}"
-            )
+            pedidos_ids = sorted(pd.to_numeric(df_hist["# Pedido"], errors="coerce").dropna().astype(int).unique().tolist())
+            pedido_sel = st.selectbox("🧾 Selecciona un pedido para editar / PDF", pedidos_ids)
 
-            colb1, colb2, colb3, colb4, colb5 = st.columns(5)
-            with colb1:
-                nuevo_estatus = st.selectbox("Cambiar estatus", ESTATUS_LIST,
-                                             index=ESTATUS_LIST.index(estatus_actual) if estatus_actual in ESTATUS_LIST else 0)
-            with colb2:
-                apply_changes = st.button("💾 Guardar cambios", key=f"save_{pedido_sel}")
-            with colb3:
-                gen_pdf = st.button("📄 Generar PDF", key=f"pdf_{pedido_sel}")
-            with colb4:
-                dup = st.button("🧬 Duplicar pedido", key=f"dup_{pedido_sel}")
-            with colb5:
-                st.write("")  # spacer
+            pedido_rows = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
+            if not pedido_rows.empty:
+                cliente_sel = pedido_rows["Nombre Cliente"].iloc[0]
+                estatus_actual = pedido_rows["Estatus"].iloc[-1]
+                st.markdown(f"### Pedido #{pedido_sel} — {cliente_sel}")
+                st.write(f"Estatus actual: **{estatus_actual}**")
 
-            if apply_changes:
-                cambios = edited.merge(
-                    pedido_rows[["Producto","Mililitros"]],
-                    on="Producto",
-                    how="left",
-                    suffixes=("_new","_old")
+                editable = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].copy()
+                editable["Mililitros"] = pd.to_numeric(editable["Mililitros"], errors="coerce").fillna(0.0)
+                editable["Costo x ml"] = pd.to_numeric(editable["Costo x ml"], errors="coerce").fillna(0.0)
+                editable["Total"] = (editable["Mililitros"] * editable["Costo x ml"]).round(2)
+
+                edited = st.data_editor(
+                    editable,
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    disabled=["Costo x ml","Total"],
+                    key=f"editor_{pedido_sel}"
                 )
 
-                # 1) Valida stock y arma lista de (producto, ml_nuevo)
-                cambios_ml = []
-                mapa_prod = _productos_index_map()
-                for _, r in cambios.iterrows():
-                    ml_old = float(r["Mililitros_old"])
-                    ml_new = float(r["Mililitros_new"])
-                    if ml_new == ml_old:
-                        continue
-                    pro = r["Producto"]
-                    diff = ml_new - ml_old
-                    if pro not in mapa_prod:
-                        st.warning(f"⚠️ '{pro}' no existe en Productos. No se ajustó stock.")
-                    else:
-                        row, costo_ml, stk = mapa_prod[pro]
-                        if diff > 0 and diff > stk:
-                            st.error(f"Stock insuficiente para '{pro}'. Disponible: {stk:g} ml")
-                            st.stop()
-                        # Aplica ajuste en Productos
-                        nuevo_stk = stk - diff
-                        productos_update_stock(pro, nuevo_stk)
-                    cambios_ml.append((pro, ml_new))
+                colb1, colb2, colb3, colb4 = st.columns(4)
+                with colb1:
+                    nuevo_estatus = st.selectbox("Cambiar estatus", ESTATUS_LIST,
+                                                 index=ESTATUS_LIST.index(estatus_actual) if estatus_actual in ESTATUS_LIST else 0)
+                with colb2:
+                    apply_changes = st.button("💾 Guardar cambios", key=f"save_{pedido_sel}")
+                with colb3:
+                    gen_pdf = st.button("📄 Generar PDF", key=f"pdf_{pedido_sel}")
+                with colb4:
+                    dup = st.button("🧬 Duplicar pedido", key=f"dup_{pedido_sel}")
 
-                # 2) Actualiza solo ML y Total; también estatus si cambió
-                pedidos_update_parcial(pedido_sel, cambios_ml, nuevo_estatus)
+                if apply_changes:
+                    cambios = edited.merge(
+                        pedido_rows[["Producto","Mililitros"]],
+                        on="Producto",
+                        how="left",
+                        suffixes=("_new","_old")
+                    )
 
-                st.success("Cambios guardados.")
-                st.experimental_rerun()
+                    cambios_ml = []
+                    mapa_prod = _productos_index_map()
+                    for _, r in cambios.iterrows():
+                        ml_old = float(r["Mililitros_old"])
+                        ml_new = float(r["Mililitros_new"])
+                        if ml_new == ml_old:
+                            continue
+                        pro = r["Producto"]
+                        diff = ml_new - ml_old
+                        if pro not in mapa_prod:
+                            st.warning(f"⚠️ '{pro}' no existe en Productos. No se ajustó stock.")
+                        else:
+                            row, costo_ml, stk = mapa_prod[pro]
+                            if diff > 0 and diff > stk:
+                                st.error(f"Stock insuficiente para '{pro}'. Disponible: {stk:g} ml")
+                                st.stop()
+                            nuevo_stk = stk - diff
+                            productos_update_stock(pro, nuevo_stk)
+                        cambios_ml.append((pro, ml_new))
 
-            if gen_pdf:
-                productos_pdf = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
-                fecha_pdf = pedido_rows["Fecha"].iloc[0]
-                estatus_pdf = pedido_rows["Estatus"].iloc[-1]
-                pdf_bytes = generar_pdf(pedido_sel, cliente_sel, fecha_pdf, estatus_pdf, productos_pdf)
-                filename_hist = f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf"
-                st.markdown(link_descarga_pdf(pdf_bytes, filename_hist), unsafe_allow_html=True)
+                    pedidos_update_parcial(pedido_sel, cambios_ml, nuevo_estatus)
+                    st.success("Cambios guardados.")
+                    st.experimental_rerun()
 
-            if dup:
-                # Duplicar con append_rows (no toca stock)
-                base = pedido_rows.copy()
-                new_id = pedidos_next_id_fast()
-                base["# Pedido"] = new_id
-                base["Fecha"] = datetime.today().strftime("%Y-%m-%d")
-                base["Estatus"] = "Cotizacion"
-                filas = base[["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"]].values.tolist()
-                pedidos_append_rows(filas)
-                st.success(f"Pedido #{new_id} duplicado.")
-                st.experimental_rerun()
+                if gen_pdf:
+                    productos_pdf = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
+                    fecha_pdf = pedido_rows["Fecha"].iloc[0]
+                    estatus_pdf = pedido_rows["Estatus"].iloc[-1]
+                    pdf_bytes = generar_pdf(pedido_sel, cliente_sel, fecha_pdf, estatus_pdf, productos_pdf)
+                    filename_hist = f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf"
+                    st.markdown(link_descarga_pdf(pdf_bytes, filename_hist), unsafe_allow_html=True)
+
+                if dup:
+                    base = pedido_rows.copy()
+                    new_id = pedidos_next_id_fast()
+                    base["# Pedido"] = new_id
+                    base["Fecha"] = datetime.today().strftime("%Y-%m-%d")
+                    base["Estatus"] = "Cotizacion"
+                    filas = base[["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"]].values.tolist()
+                    pedidos_append_rows(filas)
+                    st.success(f"Pedido #{new_id} duplicado.")
+                    st.experimental_rerun()
 
 # =====================
 # TAB 3: PRODUCTOS
 # =====================
 with tab3:
     st.subheader("🧪 Gestión de Productos")
-    st.markdown("Agregue nuevos perfumes o edite costo/stock existente.")
+    st.caption("Conecta para ver/editar la lista de productos.")
 
     with st.expander("➕ Agregar nuevo perfume", expanded=False):
         cpa, cpb, cpc = st.columns([2,1,1])
@@ -755,7 +700,9 @@ with tab3:
         with cpc:
             stock_ini = st.number_input("Stock disponible (ml)", min_value=0.0, step=1.0, key="np_stock")
         if st.button("Agregar", key="np_add"):
-            if not nombre_producto or not nombre_producto.strip() or costo_ml < 0:
+            if not st.session_state.connected:
+                st.error("Conéctate primero (barra lateral).")
+            elif not nombre_producto or not nombre_producto.strip() or costo_ml < 0:
                 st.error("Complete nombre y costo (≥0).")
             else:
                 productos_df_local = load_productos_df()
@@ -767,23 +714,26 @@ with tab3:
                     st.experimental_rerun()
 
     st.markdown("### 🗂️ Lista de productos")
-    productos_df_local = load_productos_df().copy()
-    if productos_df_local.empty:
-        st.info("Aún no hay productos en la hoja **Productos**. Agrega el primero arriba.")
+    if not st.session_state.connected:
+        st.info("Conéctate para ver la tabla de productos.")
     else:
-        edited_prod = st.data_editor(
-            productos_df_local,
-            use_container_width=True,
-            num_rows="dynamic",
-            key="prod_editor"
-        )
-        if st.button("💾 Guardar cambios de productos"):
-            if edited_prod["Costo x ml"].lt(0).any() or edited_prod["Stock disponible"].lt(0).any():
-                st.error("Costo y stock deben ser ≥ 0.")
-            else:
-                save_productos_df(edited_prod)
-                st.success("Cambios guardados.")
-                st.experimental_rerun()
+        productos_df_local = load_productos_df().copy()
+        if productos_df_local.empty:
+            st.info("Aún no hay productos en la hoja **Productos**. Agrega el primero arriba.")
+        else:
+            edited_prod = st.data_editor(
+                productos_df_local,
+                use_container_width=True,
+                num_rows="dynamic",
+                key="prod_editor"
+            )
+            if st.button("💾 Guardar cambios de productos"):
+                if edited_prod["Costo x ml"].lt(0).any() or edited_prod["Stock disponible"].lt(0).any():
+                    st.error("Costo y stock deben ser ≥ 0.")
+                else:
+                    save_productos_df(edited_prod)
+                    st.success("Cambios guardados.")
+                    st.experimental_rerun()
 
 # =====================
 # TAB 4: COMPRAS
@@ -792,7 +742,6 @@ with tab4:
     st.subheader("🛒 Compras")
     st.caption("Registra compras y decide si se agregan a la lista de **Productos**.")
 
-    # ------- Formulario de captura -------
     col1, col2, col3 = st.columns(3)
     with col1:
         producto_c = st.text_input("Producto", key="compr_prod")
@@ -817,7 +766,9 @@ with tab4:
     col_guardar, col_limpiar = st.columns(2)
     with col_guardar:
         if st.button("💾 Guardar compra"):
-            if not producto_c or not producto_c.strip():
+            if not st.session_state.connected:
+                st.error("Conéctate primero (barra lateral).")
+            elif not producto_c or not producto_c.strip():
                 st.error("Indique el nombre del producto.")
             else:
                 fila = [
@@ -861,10 +812,12 @@ with tab4:
             st.success("Se limpiaron los campos de Compras (la hoja de Google no se tocó).")
             st.experimental_rerun()
 
-    # ------- Tabla de compras -------
     st.markdown("### 📄 Historial de compras")
-    compras_df = load_compras_df().copy()
-    st.dataframe(compras_df, use_container_width=True, height=420)
+    if not st.session_state.connected:
+        st.info("Conéctate para ver el historial de compras.")
+    else:
+        compras_df = load_compras_df().copy()
+        st.dataframe(compras_df, use_container_width=True, height=420)
 
 # =====================
 # FOOTER
