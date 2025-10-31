@@ -1,5 +1,5 @@
-# app.py — H DECANTS (v11: lazy GSheets, reconectar, móvil estable)
-# =================================================================
+# app.py — H DECANTS (v12: lecturas por rango, append_rows, updates parciales, móvil rápido)
+# =========================================================================================
 
 import os
 import base64
@@ -43,10 +43,12 @@ ESTATUS_LIST = ["Cotizacion", "Pendiente", "Pagado", "En Proceso", "Entregado"]
 MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
          "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
-# =====================
-# CABECERA + Reconexión
-# =====================
-st.image(LOGO_URL, width=140)
+# Logo: primero local para evitar costo de red en móvil
+if os.path.exists(LOGO_LOCAL):
+    st.image(LOGO_LOCAL, width=140)
+else:
+    st.image(LOGO_URL, width=140)
+
 st.title("H DECANTS — Gestión de Pedidos")
 
 col_r, _ = st.columns([1, 5])
@@ -57,9 +59,9 @@ with col_r:
         load_productos_df.clear(); load_pedidos_df.clear(); load_compras_df.clear()
         st.experimental_rerun()
 
-# refresco suave cada 60 s para reabrir WebSocket en móviles (opcional)
+# refresco suave (↑ a 120s) para no invalidar caché tan seguido
 if _HAS_AR:
-    st_autorefresh(interval=60_000, key="auto") # <-- ÚNICO CAMBIO AQUÍ
+    st_autorefresh(interval=120_000, key="auto")
 
 # =====================
 # CLIENTE GSHEETS (lazy)
@@ -88,6 +90,18 @@ def get_client_and_ws():
         hdr = compras_ws.row_values(1)
         if not hdr:
             compras_ws.update("A1", [COMPRAS_COLS])
+    except Exception:
+        pass
+
+    # Asegura encabezados en Productos y Pedidos (por si no existieran)
+    try:
+        if not productos_ws.row_values(1):
+            productos_ws.update("A1", [["Producto","Costo x ml","Stock disponible"]])
+    except Exception:
+        pass
+    try:
+        if not pedidos_ws.row_values(1):
+            pedidos_ws.update("A1", [["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"]])
     except Exception:
         pass
 
@@ -122,43 +136,91 @@ def link_descarga_pdf(pdf_bytes: bytes, filename: str) -> str:
     return f'<a href="data:application/pdf;base64,{b64}" download="{filename}">📥 Descargar PDF</a>'
 
 # =====================
-# CARGA / GUARDA DATOS (Productos/Pedidos/Envios)
+# CARGA RÁPIDA POR RANGO (Productos/Pedidos/Compras)
 # =====================
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_productos_df() -> pd.DataFrame:
     try:
         _, _, productos_ws, *_ = get_ws()
-        df = pd.DataFrame(productos_ws.get_all_records())
+        vals = productos_ws.get_values("A1:C20000")  # ["Producto","Costo x ml","Stock disponible"]
     except Exception as e:
         st.warning(f"Fallo leyendo Productos: {e}")
-        return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
-    if df.empty:
-        return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
-    df["Producto"] = df.get("Producto", pd.Series(dtype=str)).astype(str)
-    if "Costo x ml" in df:
-        df["Costo x ml"] = pd.to_numeric(df["Costo x ml"], errors="coerce").fillna(0.0)
-    if "Stock disponible" in df:
-        df["Stock disponible"] = pd.to_numeric(df["Stock disponible"], errors="coerce").fillna(0.0)
-    return df
+        vals = []
 
-@st.cache_data(ttl=60, show_spinner=False)
+    if not vals:
+        return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
+
+    headers = (vals[0] + ["","",""])[:3]
+    rows = [r for r in vals[1:] if any(str(c).strip() for c in r)]
+    if not rows:
+        return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
+
+    df = pd.DataFrame(rows, columns=headers)
+    for c in ["Costo x ml","Stock disponible"]:
+        if c in df:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    if "Producto" not in df:
+        df["Producto"] = ""
+    return df[["Producto","Costo x ml","Stock disponible"]].copy()
+
+@st.cache_data(ttl=600, show_spinner=False)
 def load_pedidos_df() -> pd.DataFrame:
     try:
         _, _, _, pedidos_ws, *_ = get_ws()
-        df = pd.DataFrame(pedidos_ws.get_all_records())
+        vals = pedidos_ws.get_values("A1:H200000")
     except Exception as e:
         st.warning(f"Fallo leyendo Pedidos: {e}")
-        return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
-    if df.empty:
-        return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
-    df["Producto"] = df.get("Producto", pd.Series(dtype=str)).astype(str)
-    for col in ["# Pedido", "Mililitros"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-    for col in ["Costo x ml","Total"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        vals = []
+
+    cols = ["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"]
+    if not vals:
+        return pd.DataFrame(columns=cols)
+
+    headers = (vals[0] + [""]*8)[:8]
+    rows = [r for r in vals[1:] if any(str(c).strip() for c in r)]
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    df = pd.DataFrame(rows, columns=headers)
+
+    # normaliza tipos
+    for c in ["# Pedido","Mililitros"]:
+        if c in df: df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    for c in ["Costo x ml","Total"]:
+        if c in df: df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    return df[cols].copy()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_compras_df() -> pd.DataFrame:
+    try:
+        _, _, _, _, _, compras_ws = get_ws()
+        raw = compras_ws.get_values("A1:K10000")
+    except Exception as e:
+        st.warning(f"Fallo leyendo Compras: {e}")
+        raw = []
+
+    if not raw:
+        return pd.DataFrame(columns=COMPRAS_COLS)
+
+    headers = (raw[0] + [""] * 11)[:11]
+    rows = [ (r + [""]*11)[:11] for r in raw[1:] if any(str(c).strip() for c in r) ]
+    if not rows:
+        return pd.DataFrame(columns=COMPRAS_COLS)
+
+    df = pd.DataFrame(rows, columns=headers)
+    for col in COMPRAS_COLS:
+        if col not in df: df[col] = ""
+    df = df[COMPRAS_COLS].copy()
+    df["Pzs"]   = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
+    df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0.0)
+    df["Año"]   = pd.to_numeric(df["Año"], errors="coerce").fillna(0).astype(int)
     return df
 
+# =====================
+# GUARDADOS
+# =====================
 def save_productos_df(df: pd.DataFrame):
+    """Guardado masivo para edición total de Productos (tab 3)."""
     try:
         _, _, productos_ws, *_ = get_ws()
         productos_ws.clear()
@@ -167,74 +229,12 @@ def save_productos_df(df: pd.DataFrame):
     except Exception as e:
         st.error(f"No se pudo guardar Productos: {e}")
 
-def save_pedidos_df(df: pd.DataFrame):
-    try:
-        _, _, _, pedidos_ws, *_ = get_ws()
-        pedidos_ws.clear()
-        pedidos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
-        load_pedidos_df.clear()
-    except Exception as e:
-        st.error(f"No se pudo guardar Pedidos: {e}")
-
 def append_envio_row(data: List):
     try:
         _, _, _, _, envios_ws, _ = get_ws()
         envios_ws.append_row(data)
     except Exception as e:
         st.error(f"No se pudo agregar envío: {e}")
-
-# =====================
-# COMPRAS: carga robusta + append
-# =====================
-@st.cache_data(ttl=30, show_spinner=False)
-def load_compras_df() -> pd.DataFrame:
-    try:
-        _, _, _, _, _, compras_ws = get_ws()
-    except Exception:
-        return pd.DataFrame(columns=COMPRAS_COLS)
-
-    # Asegura encabezados
-    try:
-        hdr = compras_ws.row_values(1)
-    except Exception:
-        hdr = []
-    EXPECT = COMPRAS_COLS
-    if not hdr:
-        try:
-            compras_ws.update("A1", [EXPECT])
-        except Exception:
-            pass
-        return pd.DataFrame(columns=EXPECT)
-
-    # Lee un rango grande y normaliza
-    try:
-        raw = compras_ws.get_values("A1:K10000")
-    except Exception as e:
-        st.warning(f"Fallo leyendo Compras: {e}")
-        raw = []
-
-    if not raw:
-        return pd.DataFrame(columns=EXPECT)
-
-    headers = (raw[0] + [""] * 11)[:11]
-    rows = []
-    for r in raw[1:]:
-        if not any(str(c).strip() for c in r):
-            continue
-        rows.append((r + [""] * 11)[:11])
-
-    if not rows:
-        return pd.DataFrame(columns=EXPECT)
-
-    df = pd.DataFrame(rows, columns=headers)
-    for col in EXPECT:
-        if col not in df.columns:
-            df[col] = ""
-    df = df[EXPECT].copy()
-    df["Pzs"]   = pd.to_numeric(df["Pzs"], errors="coerce").fillna(0).astype(int)
-    df["Costo"] = pd.to_numeric(df["Costo"], errors="coerce").fillna(0.0)
-    df["Año"]   = pd.to_numeric(df["Año"], errors="coerce").fillna(0).astype(int)
-    return df
 
 def append_compra_row(row: List[str]):
     try:
@@ -244,28 +244,148 @@ def append_compra_row(row: List[str]):
     except Exception as e:
         st.error(f"No se pudo guardar la compra: {e}")
 
-# =====================
-# UTILIDADES DE STOCK
-# =====================
-def next_pedido_id(pedidos_df: pd.DataFrame) -> int:
-    if pedidos_df.empty or "# Pedido" not in pedidos_df.columns:
-        return 1
-    return int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
-
-def _get_product_row_idx(df: pd.DataFrame, nombre: str):
-    idxs = df.index[df["Producto"] == nombre]
-    return None if len(idxs) == 0 else int(idxs[0])
-
-def _get_stock(df: pd.DataFrame, idx) -> float:
+def productos_append_row(nombre: str, costo_ml: float = 0.0, stock: float = 0.0):
     try:
-        val = pd.to_numeric(df.at[idx, "Stock disponible"], errors="coerce")
-        return float(0.0 if pd.isna(val) else val)
+        _, _, productos_ws, *_ = get_ws()
+        productos_ws.append_row([nombre, float(costo_ml), float(stock)], value_input_option="USER_ENTERED")
+        load_productos_df.clear()
+    except Exception as e:
+        st.error(f"No se pudo agregar el producto '{nombre}': {e}")
+
+# =====================
+# HELPERS GSHEETS v12 (rápidos y parciales)
+# =====================
+def _productos_index_map():
+    """Devuelve dict {nombre: (row_index, costo_ml, stock)} usando solo columnas A..C."""
+    try:
+        _, _, productos_ws, *_ = get_ws()
+        nombres = productos_ws.get_values("A2:A20000")
+        costos  = productos_ws.get_values("B2:B20000")
+        stocks  = productos_ws.get_values("C2:C20000")
     except Exception:
-        return 0.0
+        return {}
 
-def _set_stock(df: pd.DataFrame, idx, nuevo: float):
-    df.at[idx, "Stock disponible"] = max(0.0, round(float(nuevo), 3))
+    out = {}
+    n = max(len(nombres), len(costos), len(stocks))
+    for i in range(n):
+        nom = (nombres[i][0] if i < len(nombres) and nombres[i] else "").strip()
+        if not nom:
+            continue
+        try:
+            costo = float(costos[i][0]) if (i < len(costos) and costos[i] and str(costos[i][0]).strip()) else 0.0
+        except Exception:
+            costo = 0.0
+        try:
+            stk   = float(stocks[i][0]) if (i < len(stocks) and stocks[i] and str(stocks[i][0]).strip()) else 0.0
+        except Exception:
+            stk = 0.0
+        out[nom] = (i+2, costo, stk)  # +2 por el header
+    return out
 
+def productos_update_stock(nombre: str, nuevo_stock: float):
+    """Actualiza solo la celda de stock para un producto (Batch por Spreadsheet)."""
+    idx = _productos_index_map().get(nombre)
+    if not idx:
+        st.warning(f"'{nombre}' no existe en Productos.")
+        return
+    row = idx[0]
+    try:
+        _, sheet, productos_ws, *_ = get_ws()
+        sheet.batch_update({
+            "valueInputOption": "USER_ENTERED",
+            "data": [
+                {"range": f"{productos_ws.title}!C{row}:C{row}", "values": [[round(max(0.0, float(nuevo_stock)), 3)]]}
+            ],
+        })
+        load_productos_df.clear()
+    except Exception as e:
+        st.error(f"No se pudo actualizar stock de '{nombre}': {e}")
+
+def pedidos_next_id_fast() -> int:
+    """Siguiente # Pedido leyendo solo columna A."""
+    try:
+        _, _, _, pedidos_ws, *_ = get_ws()
+        col = pedidos_ws.col_values(1)  # incluye header "# Pedido"
+    except Exception:
+        return 1
+    nums = []
+    for v in col[1:]:
+        try:
+            nums.append(int(float(v)))
+        except Exception:
+            pass
+    return (max(nums)+1) if nums else 1
+
+def pedidos_append_rows(rows: List[List]):
+    """Agrega múltiples filas a Pedidos (A..H)."""
+    try:
+        _, _, _, pedidos_ws, *_ = get_ws()
+        pedidos_ws.append_rows(rows, value_input_option="USER_ENTERED")
+        load_pedidos_df.clear()
+    except Exception as e:
+        st.error(f"No se pudieron agregar filas a Pedidos: {e}")
+
+def pedidos_update_parcial(pedido_id: int, cambios_ml_por_producto: List[Tuple[str, float]], nuevo_estatus: str = None):
+    """
+    Cambia ML (y Total = ML*Costo/ml) para pares (Producto, ml_nuevo) de un #Pedido,
+    y opcionalmente el Estatus, sin reescribir toda la hoja. Usa batch_update del Spreadsheet.
+    """
+    if not cambios_ml_por_producto and not nuevo_estatus:
+        return
+
+    try:
+        _, sheet, _, pedidos_ws, *_ = get_ws()
+        # Mapeo filas del pedido: leemos col A (#), D (Producto) y F (Costo/ml)
+        col_ids = pedidos_ws.get_values("A2:A200000")
+        col_pro = pedidos_ws.get_values("D2:D200000")
+        col_cml = pedidos_ws.get_values("F2:F200000")
+    except Exception as e:
+        st.error(f"No se pudo leer mapeo de Pedidos: {e}")
+        return
+
+    # Construye mapa producto -> (row, costo_ml) solo para el pedido
+    mapa = {}
+    pid_str = str(int(pedido_id))
+    n = max(len(col_ids), len(col_pro), len(col_cml))
+    for i in range(n):
+        _id = (col_ids[i][0] if i < len(col_ids) and col_ids[i] else "").strip()
+        if _id != pid_str:
+            continue
+        pro = (col_pro[i][0] if i < len(col_pro) and col_pro[i] else "").strip()
+        try:
+            cml = float(col_cml[i][0]) if (i < len(col_cml) and col_cml[i] and str(col_cml[i][0]).strip()) else 0.0
+        except Exception:
+            cml = 0.0
+        mapa[pro] = (i+2, cml)  # +2 por header
+
+    data_ranges = []
+    # Actualización de ML (col E) y Total (col G)
+    for pro, ml_new in (cambios_ml_por_producto or []):
+        if pro not in mapa:
+            st.warning(f"Producto '{pro}' no aparece en pedido #{pedido_id} (omite).")
+            continue
+        row, cml = mapa[pro]
+        total = round(float(ml_new) * float(cml), 2)
+        data_ranges.append({"range": f"{pedidos_ws.title}!E{row}:E{row}", "values": [[float(ml_new)]]})
+        data_ranges.append({"range": f"{pedidos_ws.title}!G{row}:G{row}", "values": [[total]]})
+
+    # Estatus (col H) — actualizar todas las filas del pedido
+    if nuevo_estatus:
+        for _, (row, _) in mapa.items():
+            data_ranges.append({"range": f"{pedidos_ws.title}!H{row}:H{row}", "values": [[nuevo_estatus]]})
+
+    if not data_ranges:
+        return
+
+    try:
+        sheet.batch_update({"valueInputOption": "USER_ENTERED", "data": data_ranges})
+        load_pedidos_df.clear()
+    except Exception as e:
+        st.error(f"No se pudo actualizar el pedido #{pedido_id}: {e}")
+
+# =====================
+# SESIÓN
+# =====================
 def ensure_session_keys():
     st.session_state.setdefault("pedido_items", [])
     st.session_state.setdefault("nueva_sesion", False)
@@ -349,14 +469,6 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     return raw if isinstance(raw, bytes) else raw.encode("latin-1", "ignore")
 
 # =====================
-# DATOS INICIALES (lazy)
-# =====================
-productos_df = load_productos_df()
-pedidos_df   = load_pedidos_df()
-compras_df   = load_compras_df()
-pedido_id    = next_pedido_id(pedidos_df)
-
-# =====================
 # TABS
 # =====================
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Productos", "🛒 Compras"])
@@ -365,6 +477,9 @@ tab1, tab2, tab3, tab4 = st.tabs(["➕ Nuevo Pedido", "📋 Historial", "🧪 Pr
 # TAB 1: NUEVO PEDIDO
 # =====================
 with tab1:
+    # carga mínima para arrancar rápido
+    productos_df = load_productos_df()
+
     if st.session_state.get("nueva_sesion", False):
         st.session_state.pedido_items = []
         st.session_state.nueva_sesion = False
@@ -385,7 +500,7 @@ with tab1:
             if not productos_df.empty:
                 base_opts = productos_df["Producto"].astype(str)
                 opciones = base_opts[base_opts.str.contains(search, case=False, na=False)] if search else base_opts
-                opts_list = opciones.tolist()
+                opts_list = opciones.dropna().tolist()
             else:
                 opts_list = []
             prod_pick = st.multiselect("Producto", options=opts_list, default=opts_list[:1], key="picker_producto")
@@ -394,7 +509,10 @@ with tab1:
             ml = st.number_input("ML", min_value=0.0, step=1.0, value=0.0)
         with c3:
             if (not productos_df.empty) and (prod_sel in productos_df["Producto"].values):
-                costo_actual = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Costo x ml"].iloc[0])
+                try:
+                    costo_actual = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Costo x ml"].iloc[0])
+                except Exception:
+                    costo_actual = 0.0
             else:
                 costo_actual = 0.0
             st.number_input("Costo/ml (ref)", value=float(costo_actual), disabled=True, key="costo_ref")
@@ -409,8 +527,10 @@ with tab1:
                 st.warning("Indique mililitros > 0.")
             else:
                 if not productos_df.empty and prod_sel in productos_df["Producto"].values:
-                    idx = _get_product_row_idx(productos_df, prod_sel)
-                    stock_disp = _get_stock(productos_df, idx) if idx is not None else 0.0
+                    try:
+                        stock_disp = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Stock disponible"].iloc[0])
+                    except Exception:
+                        stock_disp = 0.0
                 else:
                     stock_disp = 0.0
                 if ml > stock_disp:
@@ -451,28 +571,37 @@ with tab1:
         elif not cart_items:
             st.error("El carrito está vacío. Agregue al menos un producto.")
         else:
-            nuevas_filas = []
+            # 1) Siguiente ID por columna A
+            pedido_id = pedidos_next_id_fast()
+
+            # 2) Filas A..H para append_rows
+            filas_pedidos = []
             for prod, ml_val, costo_val, total_val in cart_items:
-                nuevas_filas.append({
-                    "# Pedido": pedido_id,
-                    "Nombre Cliente": cliente.strip(),
-                    "Fecha": fecha.strftime("%Y-%m-%d"),
-                    "Producto": prod,
-                    "Mililitros": float(ml_val),
-                    "Costo x ml": float(costo_val),
-                    "Total": float(total_val),
-                    "Estatus": estatus
-                })
-                if not productos_df.empty:
-                    idx = _get_product_row_idx(productos_df, prod)
-                    if idx is not None:
-                        stock_disp = _get_stock(productos_df, idx)
-                        _set_stock(productos_df, idx, stock_disp - float(ml_val))
+                filas_pedidos.append([
+                    pedido_id,
+                    cliente.strip(),
+                    fecha.strftime("%Y-%m-%d"),
+                    prod,
+                    float(ml_val),
+                    float(costo_val),
+                    round(float(total_val), 2),
+                    estatus
+                ])
 
-            pedidos_df_new = pd.concat([pedidos_df, pd.DataFrame(nuevas_filas)], ignore_index=True)
-            save_pedidos_df(pedidos_df_new)
-            save_productos_df(productos_df)
+            # 3) Inserta en hoja Pedidos (una sola llamada)
+            pedidos_append_rows(filas_pedidos)
 
+            # 4) Ajusta stock de Productos (parcial, celda C por producto)
+            mapa = _productos_index_map()
+            for prod, ml_val, *_ in cart_items:
+                if prod in mapa:
+                    _, costo_ml, stk = mapa[prod]
+                    nuevo = max(0.0, float(stk) - float(ml_val))
+                    productos_update_stock(prod, nuevo)
+                else:
+                    st.warning(f"'{prod}' no existe en Productos (no se ajustó stock).")
+
+            # 5) Envío
             if requiere_envio and datos_envio:
                 datos_envio[0] = pedido_id
                 datos_envio[1] = cliente.strip()
@@ -493,6 +622,9 @@ with tab1:
 # =====================
 with tab2:
     st.subheader("📋 Historial y Edición de Pedidos")
+    # carga cuando se requiere
+    pedidos_df = load_pedidos_df()
+
     colf1, colf2, colf3 = st.columns([2,1,1])
     with colf1:
         filtro_cli = st.text_input("🔍 Cliente (contiene)", placeholder="Ej. Ana")
@@ -515,7 +647,7 @@ with tab2:
     else:
         st.dataframe(df_hist.sort_values(["# Pedido","Fecha"]), use_container_width=True, height=420)
 
-        pedidos_ids = sorted(df_hist["# Pedido"].dropna().unique().tolist())
+        pedidos_ids = sorted(pd.to_numeric(df_hist["# Pedido"], errors="coerce").dropna().astype(int).unique().tolist())
         pedido_sel = st.selectbox("🧾 Selecciona un pedido para editar / PDF", pedidos_ids)
 
         pedido_rows = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
@@ -538,7 +670,7 @@ with tab2:
                 key=f"editor_{pedido_sel}"
             )
 
-            colb1, colb2, colb3, colb4 = st.columns(4)
+            colb1, colb2, colb3, colb4, colb5 = st.columns(5)
             with colb1:
                 nuevo_estatus = st.selectbox("Cambiar estatus", ESTATUS_LIST,
                                              index=ESTATUS_LIST.index(estatus_actual) if estatus_actual in ESTATUS_LIST else 0)
@@ -548,56 +680,62 @@ with tab2:
                 gen_pdf = st.button("📄 Generar PDF", key=f"pdf_{pedido_sel}")
             with colb4:
                 dup = st.button("🧬 Duplicar pedido", key=f"dup_{pedido_sel}")
+            with colb5:
+                st.write("")  # spacer
 
             if apply_changes:
-                cambios = edited.merge(pedido_rows[["Producto","Mililitros"]], on="Producto", how="left", suffixes=("_new","_old"))
-                modificaciones = []
-                prod_df = load_productos_df()
+                cambios = edited.merge(
+                    pedido_rows[["Producto","Mililitros"]],
+                    on="Producto",
+                    how="left",
+                    suffixes=("_new","_old")
+                )
+
+                # 1) Valida stock y arma lista de (producto, ml_nuevo)
+                cambios_ml = []
+                mapa_prod = _productos_index_map()
                 for _, r in cambios.iterrows():
                     ml_old = float(r["Mililitros_old"])
                     ml_new = float(r["Mililitros_new"])
-                    if ml_new != ml_old:
-                        diff = ml_new - ml_old
-                        idxp = _get_product_row_idx(prod_df, r["Producto"])
-                        if idxp is None:
-                            st.warning(f"⚠️ '{r['Producto']}' no existe en 'Productos'. No se ajustó stock.")
-                        else:
-                            stock_disp = _get_stock(prod_df, idxp)
-                            if diff > 0 and diff > stock_disp:
-                                st.error(f"Stock insuficiente para '{r['Producto']}'. Disponible: {stock_disp:g} ml")
-                                st.stop()
-                            _set_stock(prod_df, idxp, stock_disp - diff)
-                        modificaciones.append((r["Producto"], ml_new))
+                    if ml_new == ml_old:
+                        continue
+                    pro = r["Producto"]
+                    diff = ml_new - ml_old
+                    if pro not in mapa_prod:
+                        st.warning(f"⚠️ '{pro}' no existe en Productos. No se ajustó stock.")
+                    else:
+                        row, costo_ml, stk = mapa_prod[pro]
+                        if diff > 0 and diff > stk:
+                            st.error(f"Stock insuficiente para '{pro}'. Disponible: {stk:g} ml")
+                            st.stop()
+                        # Aplica ajuste en Productos
+                        nuevo_stk = stk - diff
+                        productos_update_stock(pro, nuevo_stk)
+                    cambios_ml.append((pro, ml_new))
 
-                pedidos_all = load_pedidos_df()
-                for prod, ml_new in modificaciones:
-                    mask = (pedidos_all["# Pedido"] == pedido_sel) & (pedidos_all["Producto"] == prod)
-                    pedidos_all.loc[mask, "Mililitros"] = ml_new
-                    costo = float(pedidos_all.loc[mask, "Costo x ml"].iloc[0])
-                    pedidos_all.loc[mask, "Total"] = float(ml_new) * costo
+                # 2) Actualiza solo ML y Total; también estatus si cambió
+                pedidos_update_parcial(pedido_sel, cambios_ml, nuevo_estatus)
 
-                pedidos_all.loc[pedidos_all["# Pedido"] == pedido_sel, "Estatus"] = nuevo_estatus
-                save_pedidos_df(pedidos_all)
-                save_productos_df(prod_df)
                 st.success("Cambios guardados.")
                 st.experimental_rerun()
 
             if gen_pdf:
-                productos_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel][["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
-                fecha_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Fecha"].iloc[0]
-                estatus_pdf = pedidos_df[pedidos_df["# Pedido"] == pedido_sel]["Estatus"].iloc[-1]
+                productos_pdf = pedido_rows[["Producto","Mililitros","Costo x ml","Total"]].values.tolist()
+                fecha_pdf = pedido_rows["Fecha"].iloc[0]
+                estatus_pdf = pedido_rows["Estatus"].iloc[-1]
                 pdf_bytes = generar_pdf(pedido_sel, cliente_sel, fecha_pdf, estatus_pdf, productos_pdf)
                 filename_hist = f"Pedido_{pedido_sel}_{cliente_sel.replace(' ','')}.pdf"
                 st.markdown(link_descarga_pdf(pdf_bytes, filename_hist), unsafe_allow_html=True)
 
             if dup:
-                base = pedidos_df[pedidos_df["# Pedido"] == pedido_sel].copy()
-                new_id = int(pd.to_numeric(pedidos_df["# Pedido"], errors="coerce").fillna(0).max()) + 1
+                # Duplicar con append_rows (no toca stock)
+                base = pedido_rows.copy()
+                new_id = pedidos_next_id_fast()
                 base["# Pedido"] = new_id
                 base["Fecha"] = datetime.today().strftime("%Y-%m-%d")
                 base["Estatus"] = "Cotizacion"
-                pedidos_df2 = pd.concat([pedidos_df, base], ignore_index=True)
-                save_pedidos_df(pedidos_df2)
+                filas = base[["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"]].values.tolist()
+                pedidos_append_rows(filas)
                 st.success(f"Pedido #{new_id} duplicado.")
                 st.experimental_rerun()
 
@@ -617,20 +755,14 @@ with tab3:
         with cpc:
             stock_ini = st.number_input("Stock disponible (ml)", min_value=0.0, step=1.0, key="np_stock")
         if st.button("Agregar", key="np_add"):
-            if not nombre_producto or not nombre_producto.strip() or costo_ml <= 0:
-                st.error("Complete nombre y costo (>0).")
+            if not nombre_producto or not nombre_producto.strip() or costo_ml < 0:
+                st.error("Complete nombre y costo (≥0).")
             else:
                 productos_df_local = load_productos_df()
                 if not productos_df_local.empty and nombre_producto.strip() in productos_df_local["Producto"].values:
                     st.warning("Ese producto ya existe.")
                 else:
-                    nuevo = pd.DataFrame([{
-                        "Producto": nombre_producto.strip(),
-                        "Costo x ml": float(costo_ml),
-                        "Stock disponible": float(stock_ini)
-                    }])
-                    productos_df2 = pd.concat([productos_df_local, nuevo], ignore_index=True)
-                    save_productos_df(productos_df2)
+                    productos_append_row(nombre_producto.strip(), float(costo_ml), float(stock_ini))
                     st.success("Producto agregado.")
                     st.experimental_rerun()
 
@@ -647,7 +779,7 @@ with tab3:
         )
         if st.button("💾 Guardar cambios de productos"):
             if edited_prod["Costo x ml"].lt(0).any() or edited_prod["Stock disponible"].lt(0).any():
-                st.error("Costo y stock deben ser >= 0.")
+                st.error("Costo y stock deben ser ≥ 0.")
             else:
                 save_productos_df(edited_prod)
                 st.success("Cambios guardados.")
@@ -672,7 +804,7 @@ with tab4:
         fecha_c    = st.date_input("Fecha", value=date.today(), key="compr_fecha")
     with col3:
         anio_c        = st.number_input("Año", min_value=2020, max_value=2100,
-                                        value=date.today().year, step=1, key="comtr_anio")
+                                        value=date.today().year, step=1, key="compr_anio")
         de_quien_c    = st.selectbox("De quien", ["Ahinoan","Harim","A&H"], key="compr_dequien")
         status_pago_c = st.selectbox("Status de Pago", ["Pendiente","Pagado","Parcial"], key="compr_status_pago")
 
@@ -707,13 +839,7 @@ with tab4:
                 # Si Decants = Sí -> agrega a Productos si no existe
                 prods_local = load_productos_df()
                 if decants_flag_c == "Sí" and producto_c.strip() not in prods_local["Producto"].values:
-                    nuevo_prod = pd.DataFrame([{
-                        "Producto": producto_c.strip(),
-                        "Costo x ml": 0.0,
-                        "Stock disponible": 0.0
-                    }])
-                    prods2 = pd.concat([prods_local, nuevo_prod], ignore_index=True)
-                    save_productos_df(prods2)
+                    productos_append_row(producto_c.strip(), 0.0, 0.0)
                     st.info("También se agregó a **Productos** (costo/stock en 0).")
 
                 st.experimental_rerun()
