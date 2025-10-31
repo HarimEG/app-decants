@@ -7,6 +7,10 @@ from datetime import datetime, date
 from typing import List, Tuple
 
 import streamlit as st
+
+# ---- Compatibilidad Streamlit (experimental_rerun -> rerun) ----
+if not hasattr(st, "experimental_rerun") and hasattr(st, "rerun"):
+    st.experimental_rerun = st.rerun
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
