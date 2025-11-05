@@ -1,5 +1,5 @@
-# app.py — H DECANTS (v12.1 Turbo: carga diferida + móvil rápido)
-# ===============================================================
+# app.py — H DECANTS (v12.2 Turbo-Safe)
+# =====================================
 
 import os
 import base64
@@ -7,15 +7,15 @@ from datetime import datetime, date
 from typing import List, Tuple
 
 import streamlit as st
-
-# ---- Compatibilidad Streamlit (experimental_rerun -> rerun) ----
-if not hasattr(st, "experimental_rerun") and hasattr(st, "rerun"):
-    st.experimental_rerun = st.rerun
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 from dateutil.relativedelta import relativedelta
+
+# ---- Compatibilidad Streamlit (experimental_rerun -> rerun) ----
+if not hasattr(st, "experimental_rerun") and hasattr(st, "rerun"):
+    st.experimental_rerun = st.rerun
 
 # autorefresh opcional para móviles
 try:
@@ -66,8 +66,8 @@ with col_r:
         load_productos_df.clear(); load_pedidos_df.clear(); load_compras_df.clear()
         st.experimental_rerun()
 
-# refresco suave (↑ a 120s) para no invalidar caché tan seguido
-if _HAS_AR:
+# refresco suave: SOLO cuando hay conexión (para no “churnear” en el arranque)
+if _HAS_AR and st.session_state.get("connected", False):
     st_autorefresh(interval=120_000, key="auto")
 
 # ============
@@ -76,7 +76,7 @@ if _HAS_AR:
 with st.sidebar:
     st.subheader("Conexión")
     if not st.session_state.connected:
-        st.info("Para reducir la espera en iPhone, la conexión a Google Sheets se hace bajo demanda.")
+        st.info("Para evitar esperas en iPhone, la conexión a Google Sheets es bajo demanda.")
         if st.button("🚀 Conectar a Google Sheets", use_container_width=True, type="primary"):
             st.session_state.connected = True
             st.experimental_rerun()
@@ -100,10 +100,6 @@ def _get_or_create_ws(sheet, title: str, rows: int = 200, cols: int = 20):
 @st.cache_resource(show_spinner=False)
 def get_client_and_ws():
     """Crea cliente y devuelve worksheets. Cachea el recurso."""
-    # No intentes conectar si el usuario aún no presiona "Conectar"
-    if not st.session_state.get("connected", False):
-        raise RuntimeError("Aún no conectado a Google Sheets (carga diferida activada).")
-
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(st.secrets["GOOGLE_SERVICE_ACCOUNT"], scopes=scope)
     client = gspread.authorize(creds)
@@ -126,24 +122,26 @@ def get_client_and_ws():
     except Exception:
         pass
     try:
-        hdr = compras_ws.row_values(1)
-        if not hdr:
+        if not compras_ws.row_values(1):
             compras_ws.update("A1", [COMPRAS_COLS])
     except Exception:
         pass
 
     return client, sheet, productos_ws, pedidos_ws, envios_ws, compras_ws
 
+# --- Modo seguro: no hacemos st.stop() cuando no hay conexión ---
+class NotConnected(Exception):
+    pass
+
 def get_ws():
-    """Wrapper con manejo de error para llamadas perezosas."""
+    """Devuelve worksheets si hay conexión; si no, levanta NotConnected (no detiene el render)."""
+    if not st.session_state.get("connected", False):
+        raise NotConnected("Aún no conectado a Google Sheets.")
     try:
         return get_client_and_ws()
-    except RuntimeError as e:
-        # Aún no conectado (escenario esperado en primera carga)
-        st.stop()
     except Exception as e:
         st.error(f"No hay conexión con Google Sheets: {e}")
-        st.stop()
+        raise
 
 # =====================
 # HELPERS (Latin-1 / descarga)
@@ -170,8 +168,13 @@ def link_descarga_pdf(pdf_bytes: bytes, filename: str) -> str:
 # =====================
 @st.cache_data(ttl=600, show_spinner=False)
 def load_productos_df() -> pd.DataFrame:
-    _, _, productos_ws, *_ = get_ws()
-    vals = productos_ws.get_values("A1:C20000")  # ["Producto","Costo x ml","Stock disponible"]
+    try:
+        _, _, productos_ws, *_ = get_ws()
+    except NotConnected:
+        # aún no se ha conectado: devolver DF vacío (no bloquea UI)
+        return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
+
+    vals = productos_ws.get_values("A1:C20000")
     if not vals:
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
     headers = (vals[0] + ["","",""])[:3]
@@ -188,7 +191,11 @@ def load_productos_df() -> pd.DataFrame:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_pedidos_df() -> pd.DataFrame:
-    _, _, _, pedidos_ws, *_ = get_ws()
+    try:
+        _, _, _, pedidos_ws, *_ = get_ws()
+    except NotConnected:
+        return pd.DataFrame(columns=["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"])
+
     vals = pedidos_ws.get_values("A1:H200000")
     cols = ["# Pedido","Nombre Cliente","Fecha","Producto","Mililitros","Costo x ml","Total","Estatus"]
     if not vals:
@@ -206,7 +213,11 @@ def load_pedidos_df() -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_compras_df() -> pd.DataFrame:
-    _, _, _, _, _, compras_ws = get_ws()
+    try:
+        _, _, _, _, _, compras_ws = get_ws()
+    except NotConnected:
+        return pd.DataFrame(columns=COMPRAS_COLS)
+
     raw = compras_ws.get_values("A1:K10000")
     if not raw:
         return pd.DataFrame(columns=COMPRAS_COLS)
@@ -224,26 +235,41 @@ def load_compras_df() -> pd.DataFrame:
     return df
 
 # =====================
-# GUARDADOS
+# GUARDADOS (con manejo NotConnected)
 # =====================
 def save_productos_df(df: pd.DataFrame):
-    """Guardado masivo para edición total de Productos (tab 3)."""
-    _, _, productos_ws, *_ = get_ws()
+    try:
+        _, _, productos_ws, *_ = get_ws()
+    except NotConnected:
+        st.error("Conéctate a Google Sheets para guardar Productos.")
+        return
     productos_ws.clear()
     productos_ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
     load_productos_df.clear()
 
 def append_envio_row(data: List):
-    _, _, _, _, envios_ws, _ = get_ws()
+    try:
+        _, _, _, _, envios_ws, _ = get_ws()
+    except NotConnected:
+        st.error("Conéctate a Google Sheets para guardar el envío.")
+        return
     envios_ws.append_row(data)
 
 def append_compra_row(row: List[str]):
-    _, _, _, _, _, compras_ws = get_ws()
+    try:
+        _, _, _, _, _, compras_ws = get_ws()
+    except NotConnected:
+        st.error("Conéctate a Google Sheets para guardar la compra.")
+        return
     compras_ws.append_row(row, value_input_option="USER_ENTERED")
     load_compras_df.clear()
 
 def productos_append_row(nombre: str, costo_ml: float = 0.0, stock: float = 0.0):
-    _, _, productos_ws, *_ = get_ws()
+    try:
+        _, _, productos_ws, *_ = get_ws()
+    except NotConnected:
+        st.error("Conéctate a Google Sheets para agregar productos.")
+        return
     productos_ws.append_row([nombre, float(costo_ml), float(stock)], value_input_option="USER_ENTERED")
     load_productos_df.clear()
 
@@ -251,7 +277,10 @@ def productos_append_row(nombre: str, costo_ml: float = 0.0, stock: float = 0.0)
 # HELPERS GSHEETS (parciales)
 # =====================
 def _productos_index_map():
-    _, _, productos_ws, *_ = get_ws()
+    try:
+        _, _, productos_ws, *_ = get_ws()
+    except NotConnected:
+        return {}
     nombres = productos_ws.get_values("A2:A20000")
     costos  = productos_ws.get_values("B2:B20000")
     stocks  = productos_ws.get_values("C2:C20000")
@@ -273,12 +302,17 @@ def _productos_index_map():
     return out
 
 def productos_update_stock(nombre: str, nuevo_stock: float):
-    idx = _productos_index_map().get(nombre)
+    mapa = _productos_index_map()
+    idx = mapa.get(nombre)
     if not idx:
         st.warning(f"'{nombre}' no existe en Productos.")
         return
     row = idx[0]
-    _, sheet, productos_ws, *_ = get_ws()
+    try:
+        _, sheet, productos_ws, *_ = get_ws()
+    except NotConnected:
+        st.error("Conéctate a Google Sheets para actualizar stock.")
+        return
     sheet.batch_update({
         "valueInputOption": "USER_ENTERED",
         "data": [
@@ -288,7 +322,10 @@ def productos_update_stock(nombre: str, nuevo_stock: float):
     load_productos_df.clear()
 
 def pedidos_next_id_fast() -> int:
-    _, _, _, pedidos_ws, *_ = get_ws()
+    try:
+        _, _, _, pedidos_ws, *_ = get_ws()
+    except NotConnected:
+        return 1
     col = pedidos_ws.col_values(1)  # incluye header
     nums = []
     for v in col[1:]:
@@ -297,14 +334,23 @@ def pedidos_next_id_fast() -> int:
     return (max(nums)+1) if nums else 1
 
 def pedidos_append_rows(rows: List[List]):
-    _, _, _, pedidos_ws, *_ = get_ws()
+    try:
+        _, _, _, pedidos_ws, *_ = get_ws()
+    except NotConnected:
+        st.error("Conéctate a Google Sheets para guardar pedidos.")
+        return
     pedidos_ws.append_rows(rows, value_input_option="USER_ENTERED")
     load_pedidos_df.clear()
 
 def pedidos_update_parcial(pedido_id: int, cambios_ml_por_producto: List[Tuple[str, float]], nuevo_estatus: str = None):
     if not cambios_ml_por_producto and not nuevo_estatus:
         return
-    _, sheet, _, pedidos_ws, *_ = get_ws()
+    try:
+        _, sheet, _, pedidos_ws, *_ = get_ws()
+    except NotConnected:
+        st.error("Conéctate a Google Sheets para actualizar pedidos.")
+        return
+
     col_ids = pedidos_ws.get_values("A2:A200000")
     col_pro = pedidos_ws.get_values("D2:D200000")
     col_cml = pedidos_ws.get_values("F2:F200000")
@@ -441,6 +487,7 @@ with tab1:
 
     if not st.session_state.connected:
         st.info("Pulsa **“Conectar a Google Sheets”** en la barra lateral para cargar Productos.")
+        productos_df = pd.DataFrame(columns=["Producto","Costo x ml","Stock disponible"])
     else:
         productos_df = load_productos_df()
 
@@ -457,7 +504,7 @@ with tab1:
         c1, c2, c3, c4 = st.columns([3,1.2,1.2,0.9])
         with c1:
             search = st.text_input("Buscar producto", placeholder="Escribe parte del nombre", key="buscador_prod")
-            if st.session_state.connected and 'productos_df' in locals() and not productos_df.empty:
+            if not productos_df.empty:
                 base_opts = productos_df["Producto"].astype(str)
                 opciones = base_opts[base_opts.str.contains(search, case=False, na=False)] if search else base_opts
                 opts_list = opciones.dropna().tolist()
@@ -468,7 +515,7 @@ with tab1:
         with c2:
             ml = st.number_input("ML", min_value=0.0, step=1.0, value=0.0)
         with c3:
-            if st.session_state.connected and (prod_sel != "—") and ('productos_df' in locals()):
+            if (not productos_df.empty) and (prod_sel in productos_df["Producto"].values):
                 try:
                     costo_actual = float(productos_df.loc[productos_df["Producto"] == prod_sel, "Costo x ml"].iloc[0])
                 except Exception:
@@ -660,7 +707,7 @@ with tab2:
                             row, costo_ml, stk = mapa_prod[pro]
                             if diff > 0 and diff > stk:
                                 st.error(f"Stock insuficiente para '{pro}'. Disponible: {stk:g} ml")
-                                st.stop()
+                                st.experimental_rerun()
                             nuevo_stk = stk - diff
                             productos_update_stock(pro, nuevo_stk)
                         cambios_ml.append((pro, ml_new))
@@ -791,7 +838,6 @@ with tab4:
                 append_compra_row(fila)
                 st.success("Compra guardada en la hoja **Compras**.")
 
-                # Si Decants = Sí -> agrega a Productos si no existe
                 prods_local = load_productos_df()
                 if decants_flag_c == "Sí" and producto_c.strip() not in prods_local["Producto"].values:
                     productos_append_row(producto_c.strip(), 0.0, 0.0)
