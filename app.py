@@ -1,5 +1,5 @@
-# app.py — H DECANTS (v12.2 Turbo-Safe)
-# =====================================
+# app.py — H DECANTS (v12.3 Turbo-Safe: carga diferida, batch_update correcto, PDF robusto)
+# ========================================================================================
 
 import os
 import base64
@@ -171,7 +171,6 @@ def load_productos_df() -> pd.DataFrame:
     try:
         _, _, productos_ws, *_ = get_ws()
     except NotConnected:
-        # aún no se ha conectado: devolver DF vacío (no bloquea UI)
         return pd.DataFrame(columns=["Producto", "Costo x ml", "Stock disponible"])
 
     vals = productos_ws.get_values("A1:C20000")
@@ -302,6 +301,7 @@ def _productos_index_map():
     return out
 
 def productos_update_stock(nombre: str, nuevo_stock: float):
+    """Actualiza solo la celda de stock para un producto (seguro, Worksheet.batch_update)."""
     mapa = _productos_index_map()
     idx = mapa.get(nombre)
     if not idx:
@@ -309,17 +309,14 @@ def productos_update_stock(nombre: str, nuevo_stock: float):
         return
     row = idx[0]
     try:
-        _, sheet, productos_ws, *_ = get_ws()
-    except NotConnected:
-        st.error("Conéctate a Google Sheets para actualizar stock.")
-        return
-    sheet.batch_update({
-        "valueInputOption": "USER_ENTERED",
-        "data": [
-            {"range": f"{productos_ws.title}!C{row}:C{row}", "values": [[round(max(0.0, float(nuevo_stock)), 3)]]}
-        ],
-    })
-    load_productos_df.clear()
+        _, _, productos_ws, *_ = get_ws()
+        productos_ws.batch_update(
+            [{"range": f"C{row}:C{row}", "values": [[round(max(0.0, float(nuevo_stock)), 3)]]}],
+            value_input_option="USER_ENTERED",
+        )
+        load_productos_df.clear()
+    except Exception as e:
+        st.warning(f"No se pudo actualizar stock de '{nombre}': {e}")
 
 def pedidos_next_id_fast() -> int:
     try:
@@ -343,10 +340,11 @@ def pedidos_append_rows(rows: List[List]):
     load_pedidos_df.clear()
 
 def pedidos_update_parcial(pedido_id: int, cambios_ml_por_producto: List[Tuple[str, float]], nuevo_estatus: str = None):
+    """Actualiza ML/Total por producto y estatus del pedido sin reescribir toda la hoja."""
     if not cambios_ml_por_producto and not nuevo_estatus:
         return
     try:
-        _, sheet, _, pedidos_ws, *_ = get_ws()
+        _, _, _, pedidos_ws, *_ = get_ws()
     except NotConnected:
         st.error("Conéctate a Google Sheets para actualizar pedidos.")
         return
@@ -371,21 +369,24 @@ def pedidos_update_parcial(pedido_id: int, cambios_ml_por_producto: List[Tuple[s
 
     data_ranges = []
     for pro, ml_new in (cambios_ml_por_producto or []):
-        if pro not in mapa: 
+        if pro not in mapa:
             st.warning(f"Producto '{pro}' no aparece en pedido #{pedido_id} (omite).")
             continue
         row, cml = mapa[pro]
         total = round(float(ml_new) * float(cml), 2)
-        data_ranges.append({"range": f"{pedidos_ws.title}!E{row}:E{row}", "values": [[float(ml_new)]]})
-        data_ranges.append({"range": f"{pedidos_ws.title}!G{row}:G{row}", "values": [[total]]})
+        data_ranges.append({"range": f"E{row}:E{row}", "values": [[float(ml_new)]]})
+        data_ranges.append({"range": f"G{row}:G{row}", "values": [[total]]})
 
     if nuevo_estatus:
         for _, (row, _) in mapa.items():
-            data_ranges.append({"range": f"{pedidos_ws.title}!H{row}:H{row}", "values": [[nuevo_estatus]]})
+            data_ranges.append({"range": f"H{row}:H{row}", "values": [[nuevo_estatus]]})
 
     if data_ranges:
-        sheet.batch_update({"valueInputOption": "USER_ENTERED", "data": data_ranges})
-        load_pedidos_df.clear()
+        try:
+            pedidos_ws.batch_update(data_ranges, value_input_option="USER_ENTERED")
+            load_pedidos_df.clear()
+        except Exception as e:
+            st.warning(f"No se pudo actualizar el pedido #{pedido_id}: {e}")
 
 # =====================
 # SESIÓN
@@ -397,7 +398,7 @@ def ensure_session_keys():
 ensure_session_keys()
 
 # =====================
-# PDF (Latin-1 blindado)
+# PDF (Latin-1 blindado + bytearray safe)
 # =====================
 def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
                 productos: List[Tuple[str, float, float, float]]) -> bytes:
@@ -470,7 +471,16 @@ def generar_pdf(pedido_id: int, cliente: str, fecha: str, estatus: str,
     pdf.multi_cell(0, 6, _latin1(leyenda))
 
     raw = pdf.output(dest="S")
-    return raw if isinstance(raw, bytes) else raw.encode("latin-1", "ignore")
+    # Soporta str, bytes y bytearray
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw)
+    elif isinstance(raw, str):
+        return raw.encode("latin-1", "ignore")
+    else:
+        try:
+            return bytes(raw)
+        except Exception:
+            return b""
 
 # =====================
 # TABS
